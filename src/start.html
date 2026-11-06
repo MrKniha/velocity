@@ -1,0 +1,46 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>New Tab</title>
+<style>
+  :root {
+    --bg: #18171b;
+    --glow: rgba(196, 181, 253, .07);
+    --fg: #f4f1f8;
+    --muted: rgba(244, 241, 248, .55);
+    --field: #242229;
+    --field-hover: #2a2830;
+    --line: rgba(255, 255, 255, .08);
+    --accent: #c4b5fd;
+    --font: "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; }
+  body {
+    display: grid; place-items: center;
+    background: radial-gradient(60% 50% at 50% 42%, var(--glow), transparent 70%), var(--bg);
+    color: var(--fg); font: 15px var(--font);
+  }
+  form { width: min(620px, 86vw); position: relative; translate: 0 -6vh; }
+  svg { position: absolute; left: 20px; top: 50%; translate: 0 -50%; width: 18px; height: 18px; fill: none; stroke: var(--muted); stroke-width: 2; stroke-linecap: round; }
+  input {
+    width: 100%; height: 54px; padding: 0 22px 0 52px;
+    border: 1px solid var(--line); border-radius: 16px; outline: none;
+    background: var(--field); color: var(--fg); font: inherit;
+    box-shadow: 0 10px 30px rgba(0, 0, 0, .25);
+    transition: border-color .15s, background .15s;
+  }
+  input::placeholder { color: var(--muted); }
+  input:hover { background: var(--field-hover); }
+  input:focus { border-color: var(--accent); }
+</style>
+</head>
+<body>
+  <form onsubmit="event.preventDefault(); const v = q.value.trim(); if (v) window.ipc.postMessage('nav:' + v)">
+    <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M20 20l-4-4"/></svg>
+    <input id="q" aria-label="Search or enter address" placeholder="Search or enter address" autofocus autocomplete="off" spellcheck="false">
+  </form>
+  <script>const q = document.getElementById('q'); addEventListener('focus', () => q.focus());</script>
+</body>
+</html>
