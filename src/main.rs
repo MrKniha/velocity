@@ -12,10 +12,9 @@ use tao::{
 use windows::Win32::{
     Foundation::HWND,
     Graphics::{
-        Dwm::{DwmExtendFrameIntoClientArea, DwmSetWindowAttribute, DWMWA_USE_IMMERSIVE_DARK_MODE},
+        Dwm::{DwmSetWindowAttribute, DWMWA_USE_IMMERSIVE_DARK_MODE},
         Gdi::{CreateRoundRectRgn, SetWindowRgn},
     },
-    UI::Controls::MARGINS,
 };
 use wry::{
     dpi::{LogicalPosition, LogicalSize},
@@ -27,7 +26,10 @@ const SIDEBAR_WIDTH: f64 = 240.0;
 /// Space around the page card; also where the window's own resize borders are hit.
 const GAP: f64 = 8.0;
 const CARD_RADIUS: f64 = 10.0;
-const HOME: &str = "https://duckduckgo.com";
+/// Marker for the built-in new-tab page (src/start.html); never sent to the network.
+const NEW_TAB: &str = "zenith:newtab";
+/// Window, gaps and sidebar share this colour so the page card floats on it.
+const FRAME_RGB: (u8, u8, u8) = (31, 29, 35);
 const DEFAULT_ESSENTIALS: &[&str] = &["https://github.com", "https://www.youtube.com", "https://www.wikipedia.org"];
 
 /// Runs in every page: forwards browser shortcuts, since keys pressed in a page never reach the sidebar.
@@ -41,6 +43,7 @@ addEventListener('keydown', e => {
 enum UserEvent {
     Ui(String),
     PageKey(String),
+    PageNav(u32, String),
     NewTab(String),
     UrlChanged(u32, String),
     TitleChanged(u32, String),
@@ -70,17 +73,26 @@ impl Browser {
         let id = self.next_id;
         self.next_id += 1;
         let (p1, p2, p3, p4) = (self.proxy.clone(), self.proxy.clone(), self.proxy.clone(), self.proxy.clone());
-        let view = WebViewBuilder::new_with_web_context(&mut self.ctx)
-            .with_url(url)
+        let new_tab = url == NEW_TAB;
+        let builder = WebViewBuilder::new_with_web_context(&mut self.ctx);
+        let builder = if new_tab {
+            builder.with_html(include_str!("start.html")).with_background_color((24, 23, 27, 255))
+        } else {
+            builder.with_url(url)
+        };
+        let view = builder
             .with_bounds(content_bounds(&self.window))
             .with_browser_extensions_enabled(true)
             .with_extensions_path(self.dir.join("extensions"))
             .with_devtools(true)
             .with_initialization_script(PAGE_KEYS_JS)
-            // Pages can post anything, so only the "key:" shortcuts are accepted from them.
+            // Pages can post anything: only shortcuts and "navigate this same tab" are accepted from them.
             .with_ipc_handler(move |req| {
-                if let Some(k) = req.body().strip_prefix("key:") {
+                let body = req.body();
+                if let Some(k) = body.strip_prefix("key:") {
                     let _ = p1.send_event(UserEvent::PageKey(k.to_string()));
+                } else if let Some(q) = body.strip_prefix("nav:") {
+                    let _ = p1.send_event(UserEvent::PageNav(id, q.to_string()));
                 }
             })
             .with_on_page_load_handler(move |ev, url| {
@@ -99,8 +111,24 @@ impl Browser {
             .build_as_child(&self.window)
             .expect("create tab webview");
         round_corners(&view, &self.window);
-        self.tabs.push(Tab { id, title: "New tab".into(), url: url.into(), view });
+        let shown_url = if new_tab { String::new() } else { url.to_string() };
+        self.tabs.push(Tab { id, title: "New Tab".into(), url: shown_url, view });
         self.activate(self.tabs.len() - 1);
+        if new_tab {
+            let _ = self.current().focus(); // type into the centred search bar straight away
+        }
+    }
+
+    /// Track a tab's URL; leaving the dark start page restores the white default sites expect.
+    fn set_url(&mut self, index: usize, url: String) {
+        let tab = &mut self.tabs[index];
+        if url.starts_with("http") {
+            if tab.url.is_empty() {
+                let _ = tab.view.set_background_color((255, 255, 255, 255));
+            }
+            tab.url = url;
+        }
+        self.sync_ui();
     }
 
     fn close_tab(&mut self, index: usize) {
@@ -109,7 +137,7 @@ impl Browser {
         }
         self.tabs.remove(index); // dropping the WebView destroys it
         if self.tabs.is_empty() {
-            self.open_tab(HOME);
+            self.open_tab(NEW_TAB);
             return;
         }
         self.activate(active_after_close(index, self.active, self.tabs.len()));
@@ -182,7 +210,7 @@ impl Browser {
     fn shortcut(&mut self, key: &str) {
         let n = self.tabs.len();
         match key {
-            "new" => self.open_tab(HOME),
+            "new" => self.open_tab(NEW_TAB),
             "close" => self.close_tab(self.active),
             "next" => self.activate((self.active + 1) % n),
             "prev" => self.activate((self.active + n - 1) % n),
@@ -307,21 +335,14 @@ fn main() -> wry::Result<()> {
         .with_inner_size(tao::dpi::LogicalSize::new(1280.0, 800.0))
         .with_decorations(false)
         .with_undecorated_shadow(true)
-        .with_transparent(true)
+        .with_background_color((FRAME_RGB.0, FRAME_RGB.1, FRAME_RGB.2, 255))
         .build(&event_loop)
         .expect("window");
-    // Blurred desktop shows through the sidebar and the gaps around the page; no-op where unsupported.
-    // The system backdrop only paints where the DWM frame reaches, so extend it over the whole borderless window.
+    // Dark window border/shadow. (tao's with_theme(Dark) starts this borderless window minimized.)
     unsafe {
-        let margins = MARGINS { cxLeftWidth: -1, cxRightWidth: -1, cyTopHeight: -1, cyBottomHeight: -1 };
-        let hwnd = HWND(window.hwnd() as _);
-        let _ = DwmExtendFrameIntoClientArea(hwnd, &margins);
-        // Dark acrylic; the light one washes out the sidebar text. (tao's with_theme(Dark) starts this window minimized.)
         let dark: i32 = 1;
+        let hwnd = HWND(window.hwnd() as _);
         let _ = DwmSetWindowAttribute(hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE, &dark as *const _ as _, 4);
-    }
-    if let Err(e) = window_vibrancy::apply_acrylic(&window, Some((20, 18, 24, 90))) {
-        eprintln!("acrylic unavailable: {e}");
     }
 
     let dir = data_dir();
@@ -334,7 +355,7 @@ fn main() -> wry::Result<()> {
     let ui = WebViewBuilder::new_with_web_context(&mut ctx)
         .with_html(include_str!("ui.html"))
         .with_bounds(sidebar_bounds(&window))
-        .with_transparent(true)
+        .with_background_color((FRAME_RGB.0, FRAME_RGB.1, FRAME_RGB.2, 255))
         .with_browser_extensions_enabled(true)
         .with_ipc_handler(move |req| {
             let _ = ui_proxy.send_event(UserEvent::Ui(req.body().clone()));
@@ -343,7 +364,7 @@ fn main() -> wry::Result<()> {
 
     let essentials = load_essentials(&dir);
     let mut b = Browser { window, ui, ctx, dir, proxy, tabs: Vec::new(), active: 0, next_id: 1, essentials };
-    b.open_tab(HOME);
+    b.open_tab(NEW_TAB);
 
     event_loop.run(move |event, _, control_flow| {
         *control_flow = ControlFlow::Wait;
@@ -356,11 +377,15 @@ fn main() -> wry::Result<()> {
                 }
             }
             Event::UserEvent(UserEvent::PageKey(k)) => b.shortcut(&k),
+            Event::UserEvent(UserEvent::PageNav(id, q)) => {
+                if let Some(i) = b.index_of(id) {
+                    let _ = b.tabs[i].view.load_url(&to_url(&q));
+                }
+            }
             Event::UserEvent(UserEvent::NewTab(url)) => b.open_tab(&url),
             Event::UserEvent(UserEvent::UrlChanged(id, url)) => {
                 if let Some(i) = b.index_of(id) {
-                    b.tabs[i].url = url;
-                    b.sync_ui();
+                    b.set_url(i, url);
                 }
             }
             Event::UserEvent(UserEvent::TitleChanged(id, title)) => {
