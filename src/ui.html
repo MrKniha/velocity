@@ -1,0 +1,105 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  /* Theme tokens: change these to restyle the whole sidebar. */
+  :root {
+    --bg: #1c1b22;
+    --fg: #e8e6ef;
+    --muted: #9a97a6;
+    --field: #2b2a33;
+    --hover: #34333d;
+    --active: #3d3b48;
+    --accent: #8b7cf6;
+    --radius: 8px;
+    --font: "Segoe UI Variable", "Segoe UI", system-ui, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg); font: 13px var(--font); overflow: hidden; }
+  body { display: flex; flex-direction: column; gap: 8px; padding: 10px 8px; user-select: none; }
+  button { all: unset; cursor: pointer; border-radius: var(--radius); }
+  button:focus-visible { outline: 2px solid var(--accent); }
+  .nav { display: flex; gap: 2px; }
+  .nav button { width: 30px; height: 30px; display: grid; place-items: center; font-size: 15px; }
+  .nav button:hover { background: var(--hover); }
+  .nav .spacer { flex: 1; }
+  input { width: 100%; height: 32px; border: 1px solid transparent; border-radius: var(--radius); background: var(--field); color: var(--fg); font: inherit; padding: 0 10px; outline: none; }
+  input:focus { border-color: var(--accent); }
+  #tabs { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 2px; margin: 0; padding: 0; list-style: none; }
+  .tab { display: flex; align-items: center; gap: 8px; height: 34px; padding: 0 6px 0 8px; border-radius: var(--radius); cursor: pointer; }
+  .tab:hover { background: var(--hover); }
+  .tab.active { background: var(--active); }
+  .tab img { width: 16px; height: 16px; flex: none; }
+  .tab span { flex: 1; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+  .tab .x { width: 22px; height: 22px; display: grid; place-items: center; color: var(--muted); visibility: hidden; }
+  .tab:hover .x, .tab.active .x { visibility: visible; }
+  .tab .x:hover { background: var(--field); color: var(--fg); }
+  #new { height: 34px; padding: 0 8px; color: var(--muted); display: flex; align-items: center; gap: 8px; }
+  #new:hover { background: var(--hover); color: var(--fg); }
+</style>
+</head>
+<body>
+  <div class="nav">
+    <button title="Back (Alt+Left)" aria-label="Back" onclick="send('back')">&#8592;</button>
+    <button title="Forward (Alt+Right)" aria-label="Forward" onclick="send('forward')">&#8594;</button>
+    <button title="Reload (F5)" aria-label="Reload" onclick="send('reload')">&#8635;</button>
+    <span class="spacer"></span>
+    <button title="DevTools (F12)" aria-label="DevTools" onclick="send('devtools')">&#9881;</button>
+  </div>
+  <form onsubmit="event.preventDefault(); go()">
+    <input id="url" aria-label="Address" spellcheck="false" autocomplete="off" placeholder="Search or enter address">
+  </form>
+  <button id="new" title="New tab (Ctrl+T)" onclick="send('key:new')">+&nbsp; New tab</button>
+  <ul id="tabs" role="tablist" aria-label="Tabs"></ul>
+<script>
+  const url = document.getElementById('url');
+  const list = document.getElementById('tabs');
+  const send = m => window.ipc.postMessage(m);
+  const go = () => { send('go:' + url.value); url.blur(); };
+  // Fetch from the site itself so no third party learns which sites are open.
+  // shortcut: misses icons declared via <link rel=icon> elsewhere; upgrade by reading WebView2's FaviconChanged event.
+  const favicon = u => { try { const p = new URL(u); return /^https?:$/.test(p.protocol) ? p.origin + '/favicon.ico' : ''; } catch { return ''; } };
+  function focusUrl() { url.focus(); url.select(); }
+
+  // Called from Rust with the whole tab list on every change.
+  function render(tabs, active) {
+    list.replaceChildren(...tabs.map(t => {
+      const li = document.createElement('li');
+      li.className = 'tab' + (t.id === active ? ' active' : '');
+      li.role = 'tab';
+      li.ariaSelected = t.id === active;
+      li.title = t.title + '\n' + t.url;
+      const img = document.createElement('img');
+      img.alt = '';
+      img.src = favicon(t.url);
+      img.onerror = () => img.style.visibility = 'hidden';
+      const span = document.createElement('span');
+      span.textContent = t.title || t.url;
+      const x = document.createElement('button');
+      x.className = 'x';
+      x.ariaLabel = 'Close tab';
+      x.textContent = '✕';
+      x.onclick = e => { e.stopPropagation(); send('close:' + t.id); };
+      li.onclick = () => send('select:' + t.id);
+      li.onauxclick = e => { if (e.button === 1) send('close:' + t.id); };
+      li.append(img, span, x);
+      return li;
+    }));
+    const cur = tabs.find(t => t.id === active);
+    if (cur && document.activeElement !== url) url.value = cur.url;
+  }
+
+  url.addEventListener('focus', () => url.select());
+  addEventListener('keydown', e => {
+    const tabKey = e.ctrlKey && !e.altKey ? ({t: 'new', w: 'close', l: 'focus', Tab: e.shiftKey ? 'prev' : 'next'})[e.key] : null;
+    if (tabKey) { e.preventDefault(); send('key:' + tabKey); return; }
+    if (e.key === 'F5') { e.preventDefault(); send('reload'); }
+    if (e.key === 'F12') { e.preventDefault(); send('devtools'); }
+    if (e.altKey && e.key === 'ArrowLeft') send('back');
+    if (e.altKey && e.key === 'ArrowRight') send('forward');
+    if (e.key === 'Escape') url.blur();
+  });
+</script>
+</body>
+</html>
