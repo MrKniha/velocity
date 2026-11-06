@@ -6,15 +6,29 @@ use std::path::PathBuf;
 use tao::{
     event::{Event, WindowEvent},
     event_loop::{ControlFlow, EventLoopBuilder, EventLoopProxy},
-    window::{Window, WindowBuilder},
+    platform::windows::{WindowBuilderExtWindows, WindowExtWindows},
+    window::{ResizeDirection, Window, WindowBuilder},
+};
+use windows::Win32::{
+    Foundation::HWND,
+    Graphics::{
+        Dwm::{DwmExtendFrameIntoClientArea, DwmSetWindowAttribute, DWMWA_USE_IMMERSIVE_DARK_MODE},
+        Gdi::{CreateRoundRectRgn, SetWindowRgn},
+    },
+    UI::Controls::MARGINS,
 };
 use wry::{
     dpi::{LogicalPosition, LogicalSize},
     NewWindowResponse, PageLoadEvent, Rect, WebContext, WebView, WebViewBuilder, WebViewBuilderExtWindows,
+    WebViewExtWindows,
 };
 
-const SIDEBAR_WIDTH: f64 = 260.0;
+const SIDEBAR_WIDTH: f64 = 240.0;
+/// Space around the page card; also where the window's own resize borders are hit.
+const GAP: f64 = 8.0;
+const CARD_RADIUS: f64 = 10.0;
 const HOME: &str = "https://duckduckgo.com";
+const DEFAULT_ESSENTIALS: &[&str] = &["https://github.com", "https://www.youtube.com", "https://www.wikipedia.org"];
 
 /// Runs in every page: forwards browser shortcuts, since keys pressed in a page never reach the sidebar.
 const PAGE_KEYS_JS: &str = r#"
@@ -43,11 +57,12 @@ struct Browser {
     window: Window,
     ui: WebView,
     ctx: WebContext,
-    ext_dir: PathBuf,
+    dir: PathBuf,
     proxy: EventLoopProxy<UserEvent>,
     tabs: Vec<Tab>,
     active: usize,
     next_id: u32,
+    essentials: Vec<String>,
 }
 
 impl Browser {
@@ -59,7 +74,7 @@ impl Browser {
             .with_url(url)
             .with_bounds(content_bounds(&self.window))
             .with_browser_extensions_enabled(true)
-            .with_extensions_path(&self.ext_dir)
+            .with_extensions_path(self.dir.join("extensions"))
             .with_devtools(true)
             .with_initialization_script(PAGE_KEYS_JS)
             // Pages can post anything, so only the "key:" shortcuts are accepted from them.
@@ -83,6 +98,7 @@ impl Browser {
             })
             .build_as_child(&self.window)
             .expect("create tab webview");
+        round_corners(&view, &self.window);
         self.tabs.push(Tab { id, title: "New tab".into(), url: url.into(), view });
         self.activate(self.tabs.len() - 1);
     }
@@ -115,16 +131,43 @@ impl Browser {
         &self.tabs[self.active].view
     }
 
-    /// Push the full tab list to the sidebar; small enough that diffing isn't worth it.
+    /// Essentials switch to an open tab on the same site instead of opening duplicates.
+    fn open_essential(&mut self, index: usize) {
+        let Some(url) = self.essentials.get(index).cloned() else { return };
+        match self.tabs.iter().position(|t| host(&t.url) == host(&url)) {
+            Some(i) => self.activate(i),
+            None => self.open_tab(&url),
+        }
+    }
+
+    fn toggle_essential(&mut self, url: &str) {
+        match self.essentials.iter().position(|e| host(e) == host(url)) {
+            Some(i) => {
+                self.essentials.remove(i);
+            }
+            None if host(url).is_empty() => return,
+            None => self.essentials.push(url.to_string()),
+        }
+        save_essentials(&self.dir, &self.essentials);
+        self.sync_ui();
+    }
+
+    /// Push the full state to the sidebar; small enough that diffing isn't worth it.
     fn sync_ui(&self) {
         let tabs: Vec<String> = self
             .tabs
             .iter()
             .map(|t| format!("{{\"id\":{},\"title\":{},\"url\":{}}}", t.id, js_str(&t.title), js_str(&t.url)))
             .collect();
+        let essentials: Vec<String> = self.essentials.iter().map(|e| js_str(e)).collect();
         let cur = &self.tabs[self.active];
         self.window.set_title(&format!("{} - Zenith", cur.title));
-        let _ = self.ui.evaluate_script(&format!("render([{}],{})", tabs.join(","), cur.id));
+        let _ = self.ui.evaluate_script(&format!(
+            "render([{}],{},[{}])",
+            tabs.join(","),
+            cur.id,
+            essentials.join(",")
+        ));
     }
 
     fn resize(&self) {
@@ -132,6 +175,7 @@ impl Browser {
         let b = content_bounds(&self.window);
         for t in &self.tabs {
             let _ = t.view.set_bounds(b);
+            round_corners(&t.view, &self.window);
         }
     }
 
@@ -150,7 +194,8 @@ impl Browser {
         }
     }
 
-    fn handle_ui(&mut self, msg: &str) {
+    /// Returns false when the window should close.
+    fn handle_ui(&mut self, msg: &str) -> bool {
         let (cmd, arg) = msg.split_once(':').unwrap_or((msg, ""));
         let tab = arg.parse::<u32>().ok().and_then(|id| self.index_of(id));
         let _ = match (cmd, tab) {
@@ -161,9 +206,21 @@ impl Browser {
             ("devtools", _) => Ok(self.current().open_devtools()),
             ("select", Some(i)) => Ok(self.activate(i)),
             ("close", Some(i)) => Ok(self.close_tab(i)),
+            ("pin", Some(i)) => Ok(self.toggle_essential(&self.tabs[i].url.clone())),
+            ("unpin", _) => Ok(self.toggle_essential(arg)),
+            ("essential", _) => Ok(arg.parse().map(|i| self.open_essential(i)).unwrap_or(())),
             ("key", _) => Ok(self.shortcut(arg)),
+            ("win", _) => match arg {
+                "min" => Ok(self.window.set_minimized(true)),
+                "max" => Ok(self.window.set_maximized(!self.window.is_maximized())),
+                "close" => return false,
+                _ => Ok(()),
+            },
+            ("drag", _) => Ok(drop(self.window.drag_window())),
+            ("resize", _) => Ok(drop(self.window.drag_resize_window(ResizeDirection::West))),
             _ => Ok(()),
         };
+        true
     }
 }
 
@@ -172,9 +229,25 @@ fn active_after_close(closed: usize, active: usize, remaining: usize) -> usize {
     if closed < active || active >= remaining { active.saturating_sub(1) } else { active }
 }
 
+/// "https://www.a.com:8080/x" -> "www.a.com:8080"; empty for URLs without a host.
+fn host(url: &str) -> &str {
+    url.split_once("://").map_or("", |(_, rest)| rest.split(['/', '?', '#']).next().unwrap_or(""))
+}
+
 fn data_dir() -> PathBuf {
     let base = std::env::var_os("LOCALAPPDATA").map(PathBuf::from).unwrap_or_else(std::env::temp_dir);
     base.join("zenith")
+}
+
+fn load_essentials(dir: &PathBuf) -> Vec<String> {
+    match std::fs::read_to_string(dir.join("essentials.txt")) {
+        Ok(s) => s.lines().map(str::trim).filter(|l| !l.is_empty()).map(String::from).collect(),
+        Err(_) => DEFAULT_ESSENTIALS.iter().map(|s| s.to_string()).collect(),
+    }
+}
+
+fn save_essentials(dir: &PathBuf, essentials: &[String]) {
+    let _ = std::fs::write(dir.join("essentials.txt"), essentials.join("\n"));
 }
 
 /// Turn address-bar input into a URL: keep URLs, add https:// to hosts, search everything else.
@@ -207,8 +280,23 @@ fn sidebar_bounds(window: &Window) -> Rect {
 fn content_bounds(window: &Window) -> Rect {
     let (w, h) = logical_size(window);
     Rect {
-        position: LogicalPosition::new(SIDEBAR_WIDTH, 0.0).into(),
-        size: LogicalSize::new((w - SIDEBAR_WIDTH).max(0.0), h).into(),
+        position: LogicalPosition::new(SIDEBAR_WIDTH, GAP).into(),
+        size: LogicalSize::new((w - SIDEBAR_WIDTH - GAP).max(1.0), (h - 2.0 * GAP).max(1.0)).into(),
+    }
+}
+
+/// Clip the page's host window to a rounded rect so it reads as a floating card.
+// shortcut: window regions are not anti-aliased, so the corners are slightly jagged; upgrade with DirectComposition hosting.
+fn round_corners(view: &WebView, window: &Window) {
+    let scale = window.scale_factor();
+    let size = content_bounds(window).size.to_physical::<i32>(scale);
+    let r = (CARD_RADIUS * 2.0 * scale) as i32;
+    unsafe {
+        let mut hwnd = HWND::default();
+        if view.controller().ParentWindow(&mut hwnd).is_ok() {
+            let rgn = CreateRoundRectRgn(0, 0, size.width + 1, size.height + 1, r, r);
+            SetWindowRgn(hwnd, Some(rgn), true); // the system owns rgn from here on
+        }
     }
 }
 
@@ -217,12 +305,27 @@ fn main() -> wry::Result<()> {
     let window = WindowBuilder::new()
         .with_title("Zenith")
         .with_inner_size(tao::dpi::LogicalSize::new(1280.0, 800.0))
+        .with_decorations(false)
+        .with_undecorated_shadow(true)
+        .with_transparent(true)
         .build(&event_loop)
         .expect("window");
+    // Blurred desktop shows through the sidebar and the gaps around the page; no-op where unsupported.
+    // The system backdrop only paints where the DWM frame reaches, so extend it over the whole borderless window.
+    unsafe {
+        let margins = MARGINS { cxLeftWidth: -1, cxRightWidth: -1, cyTopHeight: -1, cyBottomHeight: -1 };
+        let hwnd = HWND(window.hwnd() as _);
+        let _ = DwmExtendFrameIntoClientArea(hwnd, &margins);
+        // Dark acrylic; the light one washes out the sidebar text. (tao's with_theme(Dark) starts this window minimized.)
+        let dark: i32 = 1;
+        let _ = DwmSetWindowAttribute(hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE, &dark as *const _ as _, 4);
+    }
+    if let Err(e) = window_vibrancy::apply_acrylic(&window, Some((20, 18, 24, 90))) {
+        eprintln!("acrylic unavailable: {e}");
+    }
 
     let dir = data_dir();
-    let ext_dir = dir.join("extensions");
-    std::fs::create_dir_all(&ext_dir).ok();
+    std::fs::create_dir_all(dir.join("extensions")).ok();
     // One shared profile = one WebView2 process tree; all webviews must then use the same extension settings.
     let mut ctx = WebContext::new(Some(dir.join("profile")));
 
@@ -231,13 +334,15 @@ fn main() -> wry::Result<()> {
     let ui = WebViewBuilder::new_with_web_context(&mut ctx)
         .with_html(include_str!("ui.html"))
         .with_bounds(sidebar_bounds(&window))
+        .with_transparent(true)
         .with_browser_extensions_enabled(true)
         .with_ipc_handler(move |req| {
             let _ = ui_proxy.send_event(UserEvent::Ui(req.body().clone()));
         })
         .build_as_child(&window)?;
 
-    let mut b = Browser { window, ui, ctx, ext_dir, proxy, tabs: Vec::new(), active: 0, next_id: 1 };
+    let essentials = load_essentials(&dir);
+    let mut b = Browser { window, ui, ctx, dir, proxy, tabs: Vec::new(), active: 0, next_id: 1, essentials };
     b.open_tab(HOME);
 
     event_loop.run(move |event, _, control_flow| {
@@ -245,7 +350,11 @@ fn main() -> wry::Result<()> {
         match event {
             Event::WindowEvent { event: WindowEvent::CloseRequested, .. } => *control_flow = ControlFlow::Exit,
             Event::WindowEvent { event: WindowEvent::Resized(_), .. } => b.resize(),
-            Event::UserEvent(UserEvent::Ui(msg)) => b.handle_ui(&msg),
+            Event::UserEvent(UserEvent::Ui(msg)) => {
+                if !b.handle_ui(&msg) {
+                    *control_flow = ControlFlow::Exit;
+                }
+            }
             Event::UserEvent(UserEvent::PageKey(k)) => b.shortcut(&k),
             Event::UserEvent(UserEvent::NewTab(url)) => b.open_tab(&url),
             Event::UserEvent(UserEvent::UrlChanged(id, url)) => {
@@ -304,5 +413,13 @@ mod tests {
         assert_eq!(active_after_close(2, 2, 2), 1); // last active closed: left neighbour
         assert_eq!(active_after_close(0, 2, 2), 1); // tab before active closed: index shifts
         assert_eq!(active_after_close(2, 0, 2), 0); // tab after active closed: unchanged
+    }
+
+    #[test]
+    fn hosts() {
+        assert_eq!(host("https://www.a.com:8080/x?y"), "www.a.com:8080");
+        assert_eq!(host("https://a.com"), "a.com");
+        assert_eq!(host("https://a.com#top"), "a.com");
+        assert_eq!(host("about:blank"), "");
     }
 }
