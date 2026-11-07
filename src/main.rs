@@ -53,6 +53,7 @@ enum UserEvent {
     PageKey(String),
     PageNav(u32, String),
     PagePos(String),
+    BgInstalled(Option<media::Installed>, String),
     NewTab(String),
     UrlChanged(u32, String),
     TitleChanged(u32, String),
@@ -78,9 +79,11 @@ struct Browser {
     essentials: Vec<String>,
     settings: Settings,
     settings_view: Option<WebView>,
+    settings_tab: Option<u32>, // id of the tab the settings panel was opened on
     peeking: bool,
     we_dirs: Vec<PathBuf>,
     wallpapers: Vec<media::Wallpaper>,
+    arrange_next: bool, // the next new tab opens in arrange mode
 }
 
 impl Browser {
@@ -95,11 +98,13 @@ impl Browser {
             .map(|(k, name, f, c, t, a)| format!("['{k}','{name}','{f}','{c}','{t}','{a}']"))
             .collect();
         format!(
-            "if(!/^https?:$/.test(location.protocol)){{{THEME_JS}window.VELOCITY={};window.ESSENTIALS=[{}];window.ENGINES=[{}];window.PRESETS=[{}];}}",
+            "if(!/^https?:$/.test(location.protocol)){{{THEME_JS}window.VELOCITY={};window.ESSENTIALS=[{}];window.ENGINES=[{}];window.PRESETS=[{}];window.FRAME={};window.ARRANGE={};}}",
             self.settings.to_js(),
             essentials.join(","),
             engines.join(","),
-            presets.join(",")
+            presets.join(","),
+            self.frame_js(),
+            self.arrange_next
         )
     }
 
@@ -183,7 +188,10 @@ impl Browser {
         if index >= self.tabs.len() {
             return;
         }
-        self.tabs.remove(index); // dropping the WebView destroys it
+        let closed = self.tabs.remove(index); // dropping the WebView destroys it
+        if self.settings_tab == Some(closed.id) {
+            self.close_settings(); // the panel belonged to that tab
+        }
         if self.tabs.is_empty() {
             self.open_tab(NEW_TAB);
             return;
@@ -194,10 +202,29 @@ impl Browser {
     fn activate(&mut self, index: usize) {
         self.active = index;
         self.tabs[index].unseen = false;
-        for (i, t) in self.tabs.iter().enumerate() {
-            let _ = t.view.set_visible(i == index);
+        // Show the new page before hiding the old one, so the empty frame never flashes in between.
+        let _ = self.tabs[index].view.set_visible(true);
+        for (_, t) in self.tabs.iter().enumerate().filter(|(i, _)| *i != index) {
+            let _ = t.view.set_visible(false);
         }
+        self.show_settings_if_owner();
         self.sync_ui();
+    }
+
+    /// The settings panel belongs to the tab it was opened on: it shows only while that tab is active.
+    fn show_settings_if_owner(&self) {
+        if let Some(view) = &self.settings_view {
+            let mine = self.settings_tab == Some(self.tabs[self.active].id);
+            let _ = view.set_visible(mine);
+            if mine {
+                bring_to_top(view); // tabs opened since then sit above it
+            }
+        }
+    }
+
+    fn close_settings(&mut self) {
+        self.settings_view = None;
+        self.settings_tab = None;
     }
 
     fn index_of(&self, id: u32) -> Option<usize> {
@@ -261,6 +288,7 @@ impl Browser {
             essentials.join(","),
             self.settings.to_js()
         ));
+        self.push_frame();
     }
 
     fn sidebar_shown(&self) -> bool {
@@ -288,6 +316,7 @@ impl Browser {
             let _ = view.set_bounds(b);
             round_corners(view, &self.window, &self.settings, b);
         }
+        self.push_frame();
     }
 
     fn set_peek(&mut self, peek: bool) {
@@ -298,9 +327,16 @@ impl Browser {
     }
 
     fn toggle_settings(&mut self) {
-        if self.settings_view.take().is_some() {
-            return; // dropping the WebView closes the panel
+        let here = self.tabs[self.active].id;
+        if self.settings_view.is_some() {
+            if self.settings_tab == Some(here) {
+                return self.close_settings(); // dropping the WebView closes the panel
+            }
+            // Open on another tab: move the panel to this one instead of opening a second.
+            self.settings_tab = Some(here);
+            return self.show_settings_if_owner();
         }
+        self.settings_tab = Some(here);
         let proxy = self.proxy.clone();
         let bounds = self.content_bounds();
         let init = self.page_init_js();
@@ -336,36 +372,69 @@ impl Browser {
             .iter()
             .map(|w| {
                 format!(
-                    "{{lib:{},id:{},title:{},kind:{},preview:{}}}",
-                    w.library, js_str(&w.id), js_str(&w.title), js_str(&w.kind), js_str(&w.preview)
+                    "{{lib:{},id:{},title:{},kind:{},preview:{},entry:{}}}",
+                    w.library, js_str(&w.id), js_str(&w.title), js_str(&w.kind), js_str(&w.preview), js_str(&w.entry)
                 )
             })
             .collect();
         let _ = view.evaluate_script(&format!("renderWallpapers([{}],{})", items.join(","), self.we_dirs.len()));
     }
 
-    /// Install a new background file and show it everywhere.
-    fn set_background(&mut self, src: Option<PathBuf>) {
-        let name = match src {
-            Some(path) => match media::install(&self.dir, &path) {
-                Some(name) => name,
-                None => return,
-            },
-            None => {
-                media::clear(&self.dir);
-                String::new()
-            }
-        };
-        self.settings.bg = name;
+    /// Install a new background file and show it everywhere. Copying runs on a worker thread, so a large
+    /// Wallpaper Engine video doesn't freeze the window; `we` records which wallpaper it came from.
+    fn set_background(&mut self, src: Option<PathBuf>, we: Option<(PathBuf, media::Wallpaper)>) {
+        if src.is_none() && we.is_none() {
+            media::clear(&self.dir);
+            let none = media::Installed { bg: String::new(), entry: String::new(), thumb: String::new() };
+            return self.background_installed(Some(none), "");
+        }
+        if let Some(v) = &self.settings_view {
+            let _ = v.evaluate_script("bgBusy(true)");
+        }
+        let (dir, proxy) = (self.dir.clone(), self.proxy.clone());
+        let tag = we.as_ref().map(|(_, w)| format!("{}:{}", w.library, w.id)).unwrap_or_default();
+        std::thread::spawn(move || {
+            let done = match (src, we) {
+                (Some(path), _) => media::install_file(&dir, &path),
+                (None, Some((item, w))) => media::install_wallpaper(&dir, &item, &w),
+                (None, None) => None,
+            };
+            let _ = proxy.send_event(UserEvent::BgInstalled(done, tag));
+        });
+    }
+
+    fn background_installed(&mut self, done: Option<media::Installed>, we: &str) {
+        if let Some(v) = &self.settings_view {
+            let _ = v.evaluate_script(&format!("bgBusy(false,{})", done.is_none()));
+        }
+        let Some(done) = done else { return };
+        self.settings.bg = done.bg;
+        self.settings.set("bg_entry", &done.entry);
+        self.settings.set("bg_thumb", &done.thumb);
+        self.settings.set("bg_we", we);
         self.settings.bg_ver += 1;
         self.settings.save(&self.dir);
         self.apply_settings();
     }
 
+    /// Where the page card and the tab UI sit in the window, for pages that align the wallpaper to it.
+    fn frame_js(&self) -> String {
+        let (w, h) = logical_size(&self.window);
+        let (ui, card) = layout_rects(w, h, &self.settings);
+        format!("{{uiX:{},uiY:{},cardX:{},cardY:{},w:{},h:{}}}", ui.0, ui.1, card.0, card.1, w, h)
+    }
+
+    fn push_frame(&self) {
+        let js = format!("window.velocityFrame&&velocityFrame({})", self.frame_js());
+        let _ = self.ui.evaluate_script(&js);
+        for t in self.tabs.iter().filter(|t| t.url.is_empty()) {
+            let _ = t.view.evaluate_script(&js);
+        }
+    }
+
     fn handle_setting(&mut self, msg: &str) {
         if msg == "close" {
-            self.settings_view = None;
-            return;
+            return self.close_settings();
         }
         if let Some(cmd) = msg.strip_prefix("ess:") {
             if edit_essentials(&mut self.essentials, cmd) {
@@ -381,21 +450,34 @@ impl Browser {
                     .add_filter("Images, GIFs and videos", &exts)
                     .pick_file();
                 if file.is_some() {
-                    self.set_background(file);
+                    self.set_background(file, None);
                 }
                 return;
             }
-            "bg:clear" => return self.set_background(None),
+            "bg:clear" => return self.set_background(None, None),
+            "arrange" => {
+                // Close settings and put the new tab page into arrange mode (opening one if needed).
+                self.close_settings();
+                if self.tabs[self.active].url.is_empty() {
+                    let _ = self.current().evaluate_script("arrange(true)");
+                } else {
+                    self.arrange_next = true;
+                    self.open_tab(NEW_TAB);
+                    self.arrange_next = false;
+                }
+                return;
+            }
             "we:scan" => return self.scan_wallpapers(),
             _ => {}
         }
         if let Some(pick) = msg.strip_prefix("bg:we:") {
             // Only wallpapers from our own scan can be chosen, by library index and folder id.
             let (lib, id) = pick.split_once(':').unwrap_or(("", ""));
-            let found = self.wallpapers.iter().find(|w| lib.parse() == Ok(w.library) && w.id == id);
-            if let Some(w) = found {
-                let path = self.we_dirs[w.library].join(&w.id).join(&w.media);
-                self.set_background(Some(path));
+            let found = self.wallpapers.iter().position(|w| lib.parse() == Ok(w.library) && w.id == id);
+            if let Some(i) = found {
+                let w = self.wallpapers[i].clone();
+                let item = self.we_dirs[w.library].join(&w.id);
+                self.set_background(None, Some((item, w)));
             }
             return;
         }
@@ -524,7 +606,7 @@ type Xywh = (f64, f64, f64, f64);
 fn layout_rects(w: f64, h: f64, s: &Settings) -> (Xywh, Xywh) {
     let gap = s.gap as f64;
     let scale = s.ui_scale as f64 / 100.0; // the tab UI is drawn zoomed, so its box grows with it
-    if s.tabs_top {
+    let (ui, card) = if s.tabs_top {
         let bar = TOP_BAR * scale;
         let top = if s.compact { gap.max(PEEK_STRIP) } else { bar };
         ((0.0, 0.0, w, bar), (gap, top, (w - 2.0 * gap).max(1.0), (h - top - gap).max(1.0)))
@@ -534,7 +616,14 @@ fn layout_rects(w: f64, h: f64, s: &Settings) -> (Xywh, Xywh) {
         let (left, right) = if s.sidebar_right { (gap, side) } else { (side, gap) };
         let ui_x = if s.sidebar_right { w - sw } else { 0.0 };
         ((ui_x, 0.0, sw, h), (left, gap, (w - left - right).max(1.0), (h - 2.0 * gap).max(1.0)))
-    }
+    };
+    // Window glass: the tab UI's webview spans the whole window under the page, so the wallpaper also shows
+    // in the gaps around the page. Not in compact mode, where the tab UI is raised over the page to peek.
+    if window_glass(s) { ((0.0, 0.0, w, h), card) } else { (ui, card) }
+}
+
+fn window_glass(s: &Settings) -> bool {
+    s.bg_window && !s.bg.is_empty() && !s.compact
 }
 
 fn rect((x, y, w, h): Xywh) -> Rect {
@@ -736,11 +825,12 @@ fn main() -> wry::Result<()> {
             let _ = ui_proxy.send_event(UserEvent::Ui(req.body().clone()));
         })
         .build_as_child(&window)?;
+    media::map(&ui, media::BG_HOST, &media::bg_dir(&dir)); // window glass shows the wallpaper in the tab UI too
 
     let essentials = load_essentials(&dir);
     let mut b = Browser {
         window, ui, ctx, dir, proxy, tabs: Vec::new(), active: 0, next_id: 1, essentials, settings,
-        settings_view: None, peeking: false, we_dirs: Vec::new(), wallpapers: Vec::new(),
+        settings_view: None, settings_tab: None, peeking: false, we_dirs: Vec::new(), wallpapers: Vec::new(), arrange_next: false,
     };
     set_opacity(&b.window, b.settings.opacity);
     b.layout();
@@ -759,6 +849,7 @@ fn main() -> wry::Result<()> {
             }
             Event::UserEvent(UserEvent::Setting(msg)) => b.handle_setting(&msg),
             Event::UserEvent(UserEvent::PageKey(k)) => b.shortcut(&k),
+            Event::UserEvent(UserEvent::BgInstalled(name, we)) => b.background_installed(name, &we),
             Event::UserEvent(UserEvent::PagePos(p)) => {
                 // "clock:<x>:<y>" or "search:<x>:<y>" in % of the page; only numbers pass Settings::set.
                 let mut parts = p.splitn(3, ':');
@@ -851,6 +942,13 @@ mod tests {
         s.tabs_top = false;
         s.sidebar_right = false;
         assert_eq!(layout_rects(1000.0, 600.0, &s).0 .2, 360.0, "sidebar too");
+        s.bg_window = true;
+        assert_eq!(layout_rects(1000.0, 600.0, &s).0 .2, 360.0, "window glass needs a background");
+        s.bg = "bg.jpg".into();
+        let (ui, card) = layout_rects(1000.0, 600.0, &s);
+        assert_eq!((ui, card.0), ((0.0, 0.0, 1000.0, 600.0), 360.0), "glass: tab UI under the whole window, page unchanged");
+        s.compact = true;
+        assert_eq!(layout_rects(1000.0, 600.0, &s).0 .2, 360.0, "no window glass in compact mode");
     }
 
     #[test]

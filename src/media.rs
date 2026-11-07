@@ -43,12 +43,81 @@ pub fn install(data: &Path, src: &Path) -> Option<String> {
     Some(name)
 }
 
+/// Remove the current background: `bg.*`, its `thumb.*` and a web wallpaper's `web` folder.
 pub fn clear(data: &Path) {
     if let Ok(entries) = fs::read_dir(bg_dir(data)) {
-        for e in entries.flatten().filter(|e| e.file_name().to_string_lossy().starts_with("bg.")) {
-            let _ = fs::remove_file(e.path());
+        for e in entries.flatten() {
+            let name = e.file_name().to_string_lossy().into_owned();
+            if name == "web" {
+                let _ = fs::remove_dir_all(e.path());
+            } else if name.starts_with("bg.") || name.starts_with("thumb.") {
+                let _ = fs::remove_file(e.path());
+            }
         }
     }
+}
+
+/// What a background install produced, as stored in Settings.
+pub struct Installed {
+    pub bg: String,    // "bg.<ext>", or "bg.web" for a web wallpaper in the `web` folder
+    pub entry: String, // web wallpapers: the page inside `web` to open
+    pub thumb: String, // "thumb.<ext>": a small still used for the blurred glass behind the tabs
+}
+
+pub fn install_file(data: &Path, src: &Path) -> Option<Installed> {
+    install(data, src).map(|bg| Installed { bg, entry: String::new(), thumb: String::new() })
+}
+
+/// Web wallpapers are copied whole (they are pages with their own assets) and shown live; this caps the copy.
+const WEB_LIMIT: u64 = 300 * 1024 * 1024;
+
+/// Install a Wallpaper Engine item: videos as they are, web wallpapers as a live page, scenes as their preview.
+pub fn install_wallpaper(data: &Path, item: &Path, w: &Wallpaper) -> Option<Installed> {
+    let dir = bg_dir(data);
+    if w.kind == "web" && !w.entry.is_empty() {
+        fs::create_dir_all(&dir).ok()?;
+        let tmp = dir.join("web.incoming");
+        let _ = fs::remove_dir_all(&tmp);
+        let mut budget = WEB_LIMIT;
+        if copy_dir(item, &tmp, &mut budget).is_err() {
+            let _ = fs::remove_dir_all(&tmp);
+            return None;
+        }
+        clear(data);
+        fs::rename(&tmp, dir.join("web")).ok()?;
+        let thumb = copy_thumb(data, item, &w.preview);
+        return Some(Installed { bg: "bg.web".into(), entry: w.entry.clone(), thumb });
+    }
+    let bg = install(data, &item.join(&w.media))?;
+    let thumb = if w.kind == "video" { copy_thumb(data, item, &w.preview) } else { String::new() };
+    Some(Installed { bg, entry: String::new(), thumb })
+}
+
+fn copy_thumb(data: &Path, item: &Path, preview: &str) -> String {
+    let src = item.join(preview);
+    let Some(ext) = src.extension().and_then(|e| e.to_str()).map(|e| e.to_ascii_lowercase()) else { return String::new() };
+    let name = format!("thumb.{ext}");
+    if preview.is_empty() || !MEDIA_EXTS.contains(&ext.as_str()) || fs::copy(&src, bg_dir(data).join(&name)).is_err() {
+        return String::new();
+    }
+    name
+}
+
+fn copy_dir(src: &Path, dst: &Path, budget: &mut u64) -> std::io::Result<()> {
+    fs::create_dir_all(dst)?;
+    for entry in fs::read_dir(src)? {
+        let entry = entry?;
+        let kind = entry.file_type()?;
+        let to = dst.join(entry.file_name());
+        if kind.is_dir() {
+            copy_dir(&entry.path(), &to, budget)?;
+        } else if kind.is_file() {
+            let len = entry.metadata()?.len();
+            *budget = budget.checked_sub(len).ok_or_else(|| std::io::Error::other("web wallpaper too large"))?;
+            fs::copy(entry.path(), to)?;
+        } // links are skipped, so a wallpaper can't pull in files from elsewhere
+    }
+    Ok(())
 }
 
 /// Map `folder` to `https://<host>/` in this webview; pages may show files from it as img/video.
@@ -67,32 +136,35 @@ pub fn map(view: &WebView, host: &str, folder: &Path) {
     }
 }
 
+#[derive(Clone)]
 pub struct Wallpaper {
     pub library: usize,
     pub id: String,
     pub title: String,
     pub kind: String,
     /// File (relative to the item folder) Velocity can show: the video itself, or the preview image
-    /// for scene/web wallpapers, which only Wallpaper Engine can render.
+    /// for scene wallpapers, which only Wallpaper Engine can render.
     pub media: String,
     pub preview: String,
+    /// Web wallpapers: the HTML page Velocity shows live (empty otherwise).
+    pub entry: String,
 }
 
 /// Workshop folders of Wallpaper Engine in every Steam library on this machine.
 pub fn workshop_dirs() -> Vec<PathBuf> {
     let steam = steam_path().unwrap_or_else(|| PathBuf::from(r"C:\Program Files (x86)\Steam"));
-    let mut libs = vec![steam.clone()];
+    let mut libs: Vec<PathBuf> = vec![steam.clone()];
     if let Ok(vdf) = fs::read_to_string(steam.join("steamapps").join("libraryfolders.vdf")) {
         libs.extend(vdf_paths(&vdf).into_iter().map(PathBuf::from));
     }
-    libs.dedup();
-    let mut dirs: Vec<PathBuf> = libs
-        .into_iter()
+    // The registry and libraryfolders.vdf spell the same folder differently ("c:/program files" vs
+    // "C:\Program Files"), so compare case-insensitively with one kind of slash.
+    let mut seen = std::collections::HashSet::new();
+    libs.into_iter()
         .map(|l| l.join("steamapps").join("workshop").join("content").join(WE_APP))
         .filter(|d| d.is_dir())
-        .collect();
-    dirs.dedup();
-    dirs
+        .filter(|d| seen.insert(d.to_string_lossy().replace('/', "\\").to_lowercase()))
+        .collect()
 }
 
 /// Every subscribed wallpaper that has something Velocity can show.
@@ -110,13 +182,25 @@ pub fn scan(dirs: &[PathBuf]) -> Vec<Wallpaper> {
                 let ext = Path::new(f).extension().and_then(|e| e.to_str()).unwrap_or("").to_ascii_lowercase();
                 !f.is_empty() && !f.contains("..") && MEDIA_EXTS.contains(&ext.as_str()) && item.path().join(f).is_file()
             };
-            let media = if kind == "video" && usable(&file) { file } else if usable(&preview) { preview.clone() } else { continue };
+            let page = Path::new(&file).extension().and_then(|e| e.to_str()).is_some_and(|e| e.eq_ignore_ascii_case("html") || e.eq_ignore_ascii_case("htm"));
+            let entry = if kind == "web" && page && safe_entry(&file) && item.path().join(&file).is_file() { file.clone() } else { String::new() };
+            let media = if kind == "video" && usable(&file) { file } else if usable(&preview) { preview.clone() } else if !entry.is_empty() { String::new() } else { continue };
             let title = json_str(&json, "title").unwrap_or_else(|| id.clone());
-            out.push(Wallpaper { library, id, title, kind, media, preview: if usable(&preview) { preview } else { String::new() } });
+            out.push(Wallpaper { library, id, title, kind, media, preview: if usable(&preview) { preview } else { String::new() }, entry });
         }
     }
     out.sort_by(|a, b| a.title.to_lowercase().cmp(&b.title.to_lowercase()));
     out
+}
+
+/// A web wallpaper's page path relative to its folder: no climbing out, no absolute paths, nothing that
+/// would need escaping inside a JS string or URL segment.
+pub fn safe_entry(p: &str) -> bool {
+    !p.is_empty()
+        && p.len() <= 200
+        && !p.starts_with(['/', '\\'])
+        && !p.split(['/', '\\']).any(|seg| seg == ".." || seg.is_empty())
+        && !p.contains([':', '"', '\'', '<', '>', '`', '\\', '?', '#', '%'])
 }
 
 fn steam_path() -> Option<PathBuf> {
@@ -209,10 +293,36 @@ mod tests {
         item("2", r#"{"type":"scene","file":"scene.pkg","preview":"preview.gif","title":"aurora"}"#, &["scene.pkg", "preview.gif"]);
         item("3", r#"{"type":"web","file":"index.html","title":"No preview"}"#, &["index.html"]);
         item("4", r#"{"type":"video","file":"../../evil.mp4","preview":"p.png","title":"Escape"}"#, &["p.png"]);
+        item("5", r#"{"type":"Web","file":"CodeTime.html","preview":"preview.gif","title":"CodeTime"}"#, &["CodeTime.html", "preview.gif", "app.js"]);
         let w = scan(&[dir.clone()]);
-        let got: Vec<(&str, &str)> = w.iter().map(|w| (w.title.as_str(), w.media.as_str())).collect();
-        assert_eq!(got, vec![("aurora", "preview.gif"), ("Beach", "clip.mp4"), ("Escape", "p.png")]);
+        let got: Vec<(&str, &str, &str)> = w.iter().map(|w| (w.title.as_str(), w.media.as_str(), w.entry.as_str())).collect();
+        assert_eq!(got, vec![
+            ("aurora", "preview.gif", ""),
+            ("Beach", "clip.mp4", ""),
+            ("CodeTime", "preview.gif", "CodeTime.html"),
+            ("Escape", "p.png", ""),
+            ("No preview", "", "index.html"),
+        ]);
+
+        // A web wallpaper is copied whole and opened live; installing anything else removes it again.
+        let data = std::env::temp_dir().join("velocity-we-data");
+        let _ = fs::remove_dir_all(&data);
+        let web = w.iter().find(|w| w.title == "CodeTime").unwrap();
+        let got = install_wallpaper(&data, &dir.join("5"), web).unwrap();
+        assert_eq!((got.bg.as_str(), got.entry.as_str(), got.thumb.as_str()), ("bg.web", "CodeTime.html", "thumb.gif"));
+        assert!(bg_dir(&data).join("web").join("app.js").is_file());
+        let video = w.iter().find(|w| w.title == "Beach").unwrap();
+        install_wallpaper(&data, &dir.join("1"), video).unwrap();
+        assert!(!bg_dir(&data).join("web").exists());
+        let _ = fs::remove_dir_all(&data);
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn entries() {
+        assert!(safe_entry("index.html") && safe_entry("dist/index.html"));
+        assert!(!safe_entry("../x.html") && !safe_entry("/x.html") && !safe_entry("C:x.html"));
+        assert!(!safe_entry("a'b.html") && !safe_entry("a//b.html"));
     }
 
     #[test]

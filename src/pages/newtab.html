@@ -18,7 +18,9 @@
 
   /* Background media sits under everything; dim and blur come from settings. */
   #bg { position: fixed; inset: 0; z-index: 0; overflow: hidden; }
-  #bg > * { width: 100%; height: 100%; object-fit: var(--bg-fit, cover); filter: blur(var(--bg-blur, 0px)); transform: scale(var(--bg-scale, 1)); }
+  #bg > * { position: absolute; left: 0; top: 0; width: 100%; height: 100%; border: 0; object-fit: cover; filter: blur(var(--bg-blur, 0px)); transform: scale(var(--bg-scale, 1)); }
+  #bg > .fill { filter: blur(calc(var(--bg-blur, 0px) + 36px)) brightness(.8) saturate(1.2); transform: scale(1.15); }
+  #bg > .live { pointer-events: none; filter: blur(var(--bg-blur, 0px)); }
   #bg::after { content: ""; position: absolute; inset: 0; background: rgb(0 0 0 / var(--bg-dim, 0)); }
   [data-bg=true] body { text-shadow: 0 1px 12px rgb(0 0 0 / .35); }
   [data-bg=true] #date, [data-bg=true] .tile { color: var(--text); }
@@ -48,20 +50,42 @@
   #arrange { position: fixed; right: 16px; bottom: 16px; z-index: 3; display: flex; align-items: center; gap: 8px; height: 34px; padding: 0 14px; border: 0; border-radius: 10px;
     background: rgb(0 0 0 / .35); color: #fff; font: 13px var(--font); cursor: pointer; opacity: 0; transition: opacity .2s; backdrop-filter: blur(10px); }
   body:hover #arrange, #arrange:focus-visible, .arranging #arrange { opacity: 1; }
+  [data-arrbtn=false] body:not(.arranging) #arrange { display: none; }
+  /* Window glass: the wallpaper is laid out as big as the window and shifted so it lines up with the tab UI's. */
+  [data-full=true] #bg { inset: auto; }
   #arrange svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
   .arranging #time, .arranging #sgroup { outline: 1.5px dashed rgb(255 255 255 / .7); outline-offset: 10px; border-radius: 12px; cursor: grab; user-select: none; }
   .arranging #time:active, .arranging #sgroup:active { cursor: grabbing; }
   .arranging #sgroup * { pointer-events: none; }
   #hint { position: fixed; left: 50%; top: 16px; translate: -50% 0; z-index: 3; padding: 8px 14px; border-radius: 10px; background: rgb(0 0 0 / .55); color: #fff; font-size: 13px; }
 
-  #fx { position: fixed; inset: 0; z-index: 1; pointer-events: none; overflow: hidden; }
-  #fx i { position: absolute; top: 0; left: 0; }
+  #fx { position: fixed; inset: 0; z-index: 1; pointer-events: none; width: 100%; height: 100%; }
+  #fx.soft { filter: blur(28px); opacity: .9; }
 
   main { position: relative; z-index: 2; width: min(var(--nt-width, 560px), 100%); display: flex; flex-direction: column; align-items: var(--nt-items, center); }
   #time { display: flex; flex-direction: column; align-items: var(--nt-items, center); margin: 0 0 28px; }
   [data-order=search] #time { order: 2; margin: 28px 0 0; }
   #sgroup { width: 100%; display: flex; flex-direction: column; align-items: var(--nt-items, center); }
-  #clock { font: var(--clock-weight, 300) var(--clock-size, 56px)/1 var(--display); letter-spacing: -.02em; font-variant-numeric: tabular-nums; }
+  #clock { font: var(--clock-weight, 300) var(--clock-size, 56px)/1 var(--clock-font, var(--display)); letter-spacing: -.02em; font-variant-numeric: tabular-nums; color: var(--clock-color, var(--text)); text-align: center; }
+  #clock.stacked { line-height: .9; }
+  #clock.stacked b { display: block; font-weight: inherit; }
+  #clock.stacked b + b { opacity: .55; }
+  #clock.words { font-size: calc(var(--clock-size, 56px) * .55); line-height: 1.15; max-width: 20ch; letter-spacing: -.01em; }
+  #clock.words em { font-style: normal; color: var(--accent); }
+  #clock small { font-size: .32em; opacity: .7; margin-left: .25em; letter-spacing: 0; }
+  /* Flip clock: each digit is a card that folds away (rotateX to -90deg) and the new digit folds in. */
+  #clock.flip { display: flex; gap: .08em; perspective: 4em; }
+  #clock.flip .card { display: inline-grid; place-items: center; min-width: .72em; padding: .1em .06em; border-radius: .12em; background: rgb(0 0 0 / .35);
+    box-shadow: inset 0 -1px 0 rgb(255 255 255 / .08), 0 .06em .2em rgb(0 0 0 / .3); position: relative; transform-origin: 50% 50%; }
+  #clock.flip .card::after { content: ""; position: absolute; left: 0; right: 0; top: 50%; height: 1px; background: rgb(0 0 0 / .45); }
+  #clock.flip .sep { align-self: center; opacity: .6; padding: 0 .02em; }
+  #clock.flip .out { animation: fold-out .14s ease-in forwards; }
+  #clock.flip .in { animation: fold-in .16s ease-out; }
+  @keyframes fold-out { to { transform: rotateX(-90deg); } }
+  @keyframes fold-in { from { transform: rotateX(90deg); } }
+  @media (prefers-reduced-motion: reduce) { #clock.flip .out, #clock.flip .in { animation: none; } }
+  #greet { margin-top: 10px; font-size: calc(var(--clock-size, 56px) * .32); color: var(--text); opacity: .85; }
+  #analog .num { fill: var(--muted-card); font: 600 7px var(--font); text-anchor: middle; dominant-baseline: central; }
   #analog { width: calc(var(--clock-size, 56px) * 2.4); height: calc(var(--clock-size, 56px) * 2.4); }
   #analog .face { fill: var(--field); stroke: var(--hair); }
   #time { position: relative; }
@@ -97,8 +121,8 @@
   </filter>
 </svg>
 <div id="bg" aria-hidden="true"></div>
-<div id="fx" aria-hidden="true"></div>
-<div id="hint" hidden>Drag the clock and the search box where you want them</div>
+<canvas id="fx" aria-hidden="true"></canvas>
+<div id="hint" hidden>Drag the clock and the search box where you want them. Press Done or Esc when finished.</div>
 <button id="arrange" type="button" aria-pressed="false"><svg viewBox="0 0 24 24"><path d="M12 3v18M3 12h18M12 3l-3 3M12 3l3 3M12 21l-3-3M12 21l3-3M3 12l3-3M3 12l3 3M21 12l-3-3M21 12l-3 3"/></svg><span>Arrange</span></button>
 <main>
   <div id="time">
@@ -111,6 +135,7 @@
       <line id="sh" class="sec" x1="50" y1="58" x2="50" y2="10"/>
       <circle class="hub" cx="50" cy="50" r="2.2"/>
     </svg>
+    <div id="greet" hidden></div>
     <div id="date"></div>
   </div>
   <div id="sgroup">
@@ -126,65 +151,278 @@
   const $ = id => document.getElementById(id);
   const name = u => { try { return new URL(u).hostname.replace(/^www\./, '').split('.')[0]; } catch { return u; } };
   let S = VELOCITY, timer = 0, shown = '', fxKey = '';
-  $('ticks').innerHTML = Array.from({ length: 12 }, (_, i) =>
-    `<line class="tick" x1="50" y1="${i % 3 ? 7 : 5}" x2="50" y2="11" transform="rotate(${i * 30} 50 50)"/>`).join('');
+  function drawFace(face) {
+    $('ticks').innerHTML = face === 'minimal' ? '' : face === 'numbers'
+      ? Array.from({ length: 12 }, (_, i) => { const a = (i + 1) * Math.PI / 6; return `<text class="num" x="${50 + 38 * Math.sin(a)}" y="${50 - 38 * Math.cos(a)}">${i + 1}</text>`; }).join('')
+      : Array.from({ length: 12 }, (_, i) => `<line class="tick" x1="50" y1="${i % 3 ? 7 : 5}" x2="50" y2="11" transform="rotate(${i * 30} 50 50)"/>`).join('');
+  }
+
+  /* Word clock: the time rounded to five minutes, said the way people say it
+     ("quarter past ten", "twenty-five to three"), like the word-clock projects on GitHub. */
+  const HOURS = ['twelve', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten', 'eleven'];
+  const MINS = ['', 'five', 'ten', 'quarter', 'twenty', 'twenty-five', 'half'];
+  function words(d) {
+    const m5 = Math.round((d.getMinutes() + d.getSeconds() / 60) / 5) * 5;
+    let h = d.getHours() + (m5 > 30 ? 1 : 0);
+    const hour = HOURS[h % 12];
+    if (m5 === 0 || m5 === 60) return `It's <em>${hour}</em> o'clock`; // 2:58 rounds to "three o'clock"
+    return m5 <= 30 ? `It's <em>${MINS[m5 / 5]}</em> past <em>${hour}</em>` : `It's <em>${MINS[(60 - m5) / 5]}</em> to <em>${hour}</em>`;
+  }
+
+  let flipped = '';
+  function flip(text) {
+    const el = $('clock');
+    if (el.children.length !== text.length) { el.replaceChildren(); flipped = ''; }
+    [...text].forEach((ch, i) => {
+      let card = el.children[i];
+      if (!card) {
+        card = document.createElement('span');
+        card.className = /\d/.test(ch) ? 'card' : 'sep';
+        card.textContent = ch;
+        el.append(card);
+        return;
+      }
+      if (flipped[i] === ch) return;
+      card.classList.remove('in');
+      card.classList.add('out');
+      setTimeout(() => { card.textContent = ch; card.classList.replace('out', 'in'); }, 140);
+    });
+    flipped = text;
+  }
+
+  function greeting(h) { return h < 5 ? 'Good night' : h < 12 ? 'Good morning' : h < 18 ? 'Good afternoon' : h < 22 ? 'Good evening' : 'Good night'; }
 
   function tick() {
     const d = new Date();
     const hour12 = S.clockFormat === 'auto' ? undefined : S.clockFormat === '12';
-    $('clock').textContent = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: S.clockSeconds ? '2-digit' : undefined, hour12 });
+    const parts = new Intl.DateTimeFormat([], { hour: '2-digit', minute: '2-digit', second: S.clockSeconds ? '2-digit' : undefined, hour12 }).formatToParts(d);
+    const get = t => parts.find(p => p.type === t)?.value || '';
+    const ampm = get('dayPeriod');
+    const hm = get('hour') + ':' + get('minute') + (S.clockSeconds ? ':' + get('second') : '');
+    const el = $('clock');
+    el.className = S.clockStyle;
+    if (S.clockStyle === 'digital') el.innerHTML = hm + (ampm ? `<small>${ampm}</small>` : '');
+    else if (S.clockStyle === 'stacked') el.innerHTML = `<b>${get('hour')}</b><b>${get('minute')}</b>`;
+    else if (S.clockStyle === 'words') el.innerHTML = words(d);
+    else if (S.clockStyle === 'flip') flip(hm);
     const [h, m, sec] = [d.getHours() % 12, d.getMinutes(), d.getSeconds()];
     $('hh').setAttribute('transform', `rotate(${(h + m / 60) * 30} 50 50)`);
     $('mh').setAttribute('transform', `rotate(${(m + sec / 60) * 6} 50 50)`);
     $('sh').setAttribute('transform', `rotate(${sec * 6} 50 50)`);
-    $('date').textContent = d.toLocaleDateString([], { weekday: 'long', day: 'numeric', month: 'long' });
+    const fmt = { long: { weekday: 'long', day: 'numeric', month: 'long' }, short: { weekday: 'short', day: 'numeric', month: 'short' }, numeric: { dateStyle: 'short' } }[S.clockDateFmt];
+    $('date').textContent = d.toLocaleDateString([], fmt);
+    $('greet').textContent = greeting(d.getHours());
   }
 
   // The background file is served from the data dir's background folder (mapped in Rust); videos loop muted.
   function background(s) {
     document.documentElement.dataset.bg = !!s.bg;
-    const src = s.bg ? `https://bg.velocity.example/${s.bg}?v=${s.bgVer}` : '';
-    if (src === shown) return;
-    shown = src;
-    const el = !src ? null : /\.(mp4|webm)$/.test(s.bg)
-      ? Object.assign(document.createElement('video'), { src, autoplay: true, loop: true, muted: true, playsInline: true })
-      : Object.assign(document.createElement('img'), { src, alt: '' });
-    $('bg').replaceChildren(...(el ? [el] : []));
+    document.documentElement.dataset.full = s.bgWindow && !!s.bg && !s.compact;
+    const host = 'https://bg.velocity.example/';
+    const web = s.bg === 'bg.web';
+    const src = !s.bg ? '' : web ? host + 'web/' + s.bgEntry.split('/').map(encodeURIComponent).join('/') + '?v=' + s.bgVer : `${host}${s.bg}?v=${s.bgVer}`;
+    if (src !== shown) {
+      shown = src;
+      const layers = [];
+      if (web) {
+        // A Wallpaper Engine web wallpaper runs live, isolated on its own origin; clicks pass through to the page.
+        layers.push(Object.assign(document.createElement('iframe'), { src, className: 'main live', tabIndex: -1, title: '' }));
+        layers[0].setAttribute('sandbox', 'allow-scripts allow-same-origin');
+      } else if (src) {
+        const video = /\.(mp4|webm)$/.test(s.bg);
+        const make = (cls, url) => video && cls === 'main'
+          ? Object.assign(document.createElement('video'), { src: url, className: cls, autoplay: true, loop: true, muted: true, playsInline: true })
+          : Object.assign(document.createElement('img'), { src: url, className: cls, alt: '' });
+        // Blurred fill behind a picture that doesn't cover the page; for videos a still keeps it to one decoder.
+        const fillSrc = video ? (s.bgThumb ? `${host}${s.bgThumb}?v=${s.bgVer}` : '') : src;
+        if (fillSrc) layers.push(make('fill', fillSrc));
+        const main = make('main', src);
+        main.addEventListener(video ? 'loadedmetadata' : 'load', fit);
+        layers.push(main);
+      }
+      $('bg').replaceChildren(...layers);
+    }
+    fit();
+    const v = $('bg').querySelector('video');
+    if (v) {
+      v.playbackRate = s.bgSpeed / 100;
+      v.muted = !s.bgSound;
+      v.volume = s.bgVolume / 100;
+      if (!s.bgPause && v.paused) v.play().catch(() => {});
+    }
+    velocityFrame(FRAME);
   }
+  /* How the background sits. Auto fills the page when the picture is big enough (needs at most 1.5x to
+     cover), otherwise shows it whole and sharp, at most 2x its real size, over a blurred copy: a 512 px
+     Wallpaper Engine preview then stays crisp instead of being cropped and stretched. */
+  function fit() {
+    const main = $('bg').querySelector('.main'), fill = $('bg').querySelector('.fill');
+    if (!main || main.classList.contains('live')) return;
+    const nw = main.naturalWidth || main.videoWidth, nh = main.naturalHeight || main.videoHeight;
+    const bw = $('bg').clientWidth, bh = $('bg').clientHeight;
+    let mode = S.bgFit;
+    if (mode === 'auto') mode = nw && nh && Math.max(bw / nw, bh / nh) > 1.5 ? 'small' : 'cover';
+    main.style.objectFit = mode === 'small' ? 'contain' : mode;
+    // Fill: the focus point picks which part stays in view, zoom crops in further around it.
+    const focus = `${S.bgFocusX}% ${S.bgFocusY}%`, zoom = mode === 'cover' ? S.bgZoom / 100 : 1;
+    main.style.objectPosition = mode === 'cover' ? focus : '';
+    main.style.transformOrigin = focus;
+    main.style.transform = `scale(${zoom * (S.bgBlur ? 1.06 : 1)})`;
+    // A picture blown up far beyond its pixels shows blocky steps; a little blur reads as soft instead.
+    const up = nw ? (mode === 'cover' ? Math.max(bw / nw, bh / nh) : Math.min(bw / nw, bh / nh, 2)) * zoom * devicePixelRatio : 1;
+    const smooth = up > 2 ? Math.min(6, (up - 2) * .8) : 0;
+    main.style.filter = `blur(${S.bgBlur + smooth}px)`;
+    if (mode === 'small' && nw) {
+      const k = Math.min(bw / nw, bh / nh, 2);
+      Object.assign(main.style, { width: nw * k + 'px', height: nh * k + 'px', left: (bw - nw * k) / 2 + 'px', top: (bh - nh * k) / 2 + 'px' });
+    } else {
+      Object.assign(main.style, { width: '', height: '', left: '', top: '' });
+    }
+    if (fill) fill.style.display = mode === 'cover' ? 'none' : '';
+  }
+  addEventListener('resize', fit);
 
-  /* Particle effects. Snow follows pure-snow.js by hyperstown (MIT License, https://github.com/hyperstown/pure-snow.js):
-     each flake gets its own keyframes with a three-point sideways drift, a random scale, opacity, duration and a
-     negative delay so the sky is already full. Rain and stars reuse the same generator. Off under reduced motion. */
+  // Called by Rust with the window size and where the page card sits in it (logical px).
+  function velocityFrame(f) {
+    FRAME = f;
+    const st = $('bg').style;
+    if (document.documentElement.dataset.full !== 'true') { st.left = st.top = st.width = st.height = ''; return; }
+    const z = S.uiScale / 100;
+    st.left = -f.cardX / z + 'px'; st.top = -f.cardY / z + 'px';
+    st.width = f.w / z + 'px'; st.height = f.h / z + 'px';
+    fit();
+  }
+  // Pause the wallpaper video while this tab isn't shown (another tab, minimised window).
+  document.addEventListener('visibilitychange', () => {
+    const v = $('bg').querySelector('video');
+    if (v && S.bgPause) document.hidden ? v.pause() : v.play().catch(() => {});
+  });
+
+  /* Ambient effects on one canvas, in the style of particles.js by Vincent Garreau (MIT License,
+     https://github.com/VincentGarreau/particles.js): random spawn, a base velocity plus jitter, per-frame
+     movement and wrap-around at the edges, opacity pulses. Snow keeps the side-to-side drift of
+     pure-snow.js by hyperstown (MIT). One canvas and one animation loop for every effect; paused while the
+     tab is hidden and off when Windows asks for reduced motion. */
+  const fx = $('fx'), ctx = fx.getContext('2d');
+  let parts = [], fxRun = 0, fxT = 0;
+  const rnd = (a, b) => a + Math.random() * (b - a);
+  const PALETTE = {
+    snow: ['#ffffff'], rain: ['#d6e4ff'], stars: ['#ffffff', '#fff4d6', '#dbe6ff'], fireflies: ['#fff3a0', '#d7ff8a'],
+    sakura: ['#ffc4d6', '#ffb0c8', '#ffe1ea'], leaves: ['#e3a23b', '#d2691e', '#b5651d', '#c9a227'], bubbles: ['#ffffff'],
+    matrix: ['#46ff8a'], aurora: ['#3dffb4', '#3ad1ff', '#a46bff'],
+  };
+  function spawn(kind, w, h, anywhere) {
+    const col = S.effectAccent ? S.accent : PALETTE[kind][Math.floor(Math.random() * PALETTE[kind].length)];
+    const p = { x: rnd(0, w), y: anywhere ? rnd(0, h) : -20, col, ph: rnd(0, 6.3), a: rnd(.35, .95) };
+    if (kind === 'snow') Object.assign(p, { r: rnd(1.2, 4.2), vy: rnd(.35, 1.1), sway: rnd(.3, 1) });
+    if (kind === 'rain') Object.assign(p, { len: rnd(12, 26), vy: rnd(9, 15), a: rnd(.25, .55) });
+    if (kind === 'stars') Object.assign(p, { y: rnd(0, h), r: rnd(.4, 1.5), tw: rnd(.6, 2.2) });
+    if (kind === 'fireflies') Object.assign(p, { y: rnd(0, h), r: rnd(1.5, 3), dir: rnd(0, 6.3), sp: rnd(.2, .6), tw: rnd(.8, 2) });
+    if (kind === 'sakura' || kind === 'leaves') Object.assign(p, { r: kind === 'leaves' ? rnd(5, 9) : rnd(3.5, 6), vy: rnd(.6, 1.4), sway: rnd(.6, 1.6), rot: rnd(0, 6.3), vr: rnd(-.04, .04) });
+    if (kind === 'bubbles') Object.assign(p, { y: anywhere ? rnd(0, h) : h + 20, r: rnd(4, 16), vy: -rnd(.3, 1), sway: rnd(.2, .7), a: rnd(.25, .55) });
+    return p;
+  }
   function effects(s) {
-    const key = s.effect + s.effectAmount;
+    const key = [s.effect, s.effectAmount, s.effectAccent, s.accent].join();
     if (key === fxKey) return;
     fxKey = key;
-    const fx = $('fx');
-    fx.replaceChildren();
-    if (s.effect === 'none' || matchMedia('(prefers-reduced-motion: reduce)').matches) return;
-    const r = (a, b) => a + Math.random() * (b - a);
-    let css = '';
-    const flakes = [];
-    for (let i = 0; i < s.effectAmount; i++) {
-      const el = document.createElement('i');
-      const x = r(0, 100);
-      if (s.effect === 'snow') {
-        const size = r(3, 9), turn = r(.3, .8), off = r(-6, 10);
-        el.style.cssText = `width:${size}px;height:${size}px;border-radius:50%;background:#fff;opacity:${r(.35, .95)};filter:blur(${size > 7 ? 1 : 0}px);animation:f${i} ${r(10, 26)}s ${-r(0, 26)}s linear infinite`;
-        css += `@keyframes f${i}{from{transform:translate(${x}vw,-10px)}${turn * 100}%{transform:translate(${x + off}vw,${turn * 100}vh)}to{transform:translate(${x + off / 2}vw,102vh)}}`;
-      } else if (s.effect === 'rain') {
-        const len = r(14, 26);
-        el.style.cssText = `width:1px;height:${len}px;background:linear-gradient(transparent,rgb(255 255 255 / ${r(.25, .55)}));animation:f${i} ${r(.45, 1.1)}s ${-r(0, 1.1)}s linear infinite`;
-        css += `@keyframes f${i}{from{transform:translate(${x}vw,-30px) rotate(8deg)}to{transform:translate(${x - 3}vw,104vh) rotate(8deg)}}`;
-      } else {
-        const size = r(1, 2.6);
-        el.style.cssText = `width:${size}px;height:${size}px;border-radius:50%;background:#fff;transform:translate(${x}vw,${r(0, 100)}vh);animation:tw ${r(2, 6)}s ${-r(0, 6)}s ease-in-out infinite alternate`;
-      }
-      flakes.push(el);
+    cancelAnimationFrame(fxRun);
+    fx.classList.toggle('soft', s.effect === 'aurora');
+    if (s.effect === 'none' || matchMedia('(prefers-reduced-motion: reduce)').matches) { ctx.clearRect(0, 0, fx.width, fx.height); parts = []; return; }
+    sizeFx();
+    const w = innerWidth, h = innerHeight, kind = s.effect;
+    if (kind === 'matrix') {
+      const cols = Math.max(4, Math.round(w / 18 * s.effectAmount / 150));
+      parts = Array.from({ length: cols }, (_, i) => ({ x: (i + .5) * w / cols, y: rnd(-h, h), vy: rnd(2, 5), trail: [] }));
+    } else if (kind === 'aurora') {
+      parts = Array.from({ length: 3 }, (_, i) => ({ col: S.effectAccent ? S.accent : PALETTE.aurora[i], y: h * (.18 + i * .1), amp: h * rnd(.05, .1), ph: rnd(0, 6.3), k: rnd(1.2, 2.4) }));
+    } else {
+      parts = Array.from({ length: s.effectAmount }, () => spawn(kind, w, h, true));
     }
-    const style = document.createElement('style');
-    style.textContent = css + '@keyframes tw{from{opacity:.1}to{opacity:.9}}';
-    fx.append(style, ...flakes);
+    fxRun = requestAnimationFrame(frame);
+  }
+  function sizeFx() {
+    const dpr = devicePixelRatio || 1;
+    fx.width = innerWidth * dpr; fx.height = innerHeight * dpr;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  }
+  addEventListener('resize', () => { if (parts.length) sizeFx(); });
+  function frame() {
+    fxRun = requestAnimationFrame(frame);
+    if (document.hidden) return;
+    // 100 % is a calm pace: half of the raw particle speeds below, so the default never feels hectic.
+    const w = innerWidth, h = innerHeight, kind = S.effect, sp = S.effectSpeed / 100 * .5, wind = S.effectWind / 100 * 1.6;
+    fxT += .016 * sp;
+    ctx.clearRect(0, 0, w, h);
+    if (kind === 'matrix') {
+      ctx.font = '15px "Cascadia Mono", Consolas, monospace';
+      ctx.textAlign = 'center';
+      for (const c of parts) {
+        c.y += c.vy * sp;
+        if (Math.random() < .35 * sp) c.trail.unshift(String.fromCharCode(0x30a0 + Math.floor(Math.random() * 96)));
+        c.trail.length = Math.min(c.trail.length, 22);
+        c.trail.forEach((ch, i) => {
+          ctx.globalAlpha = i === 0 ? 1 : .8 * (1 - i / c.trail.length);
+          ctx.fillStyle = i === 0 ? '#e6ffe9' : (S.effectAccent ? S.accent : PALETTE.matrix[0]);
+          ctx.fillText(ch, c.x, c.y - i * 17);
+        });
+        if (c.y - c.trail.length * 17 > h) { c.y = rnd(-80, 0); c.vy = rnd(2, 5); c.trail = []; }
+      }
+      ctx.globalAlpha = 1;
+      return;
+    }
+    if (kind === 'aurora') {
+      ctx.globalCompositeOperation = 'lighter';
+      for (const b of parts) {
+        ctx.beginPath();
+        for (let x = -20; x <= w + 20; x += 20) {
+          const y = b.y + Math.sin(x / w * Math.PI * b.k + fxT * .6 + b.ph) * b.amp + Math.sin(x / 140 + fxT) * 12;
+          x === -20 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+        }
+        ctx.lineTo(w + 20, b.y + h * .35); ctx.lineTo(-20, b.y + h * .35); ctx.closePath();
+        const g = ctx.createLinearGradient(0, b.y - b.amp, 0, b.y + h * .35);
+        g.addColorStop(0, b.col + '00'); g.addColorStop(.25, b.col + '66'); g.addColorStop(1, b.col + '00');
+        ctx.fillStyle = g; ctx.fill();
+      }
+      ctx.globalCompositeOperation = 'source-over';
+      return;
+    }
+    for (let i = 0; i < parts.length; i++) {
+      const p = parts[i];
+      ctx.globalAlpha = p.a;
+      ctx.fillStyle = ctx.strokeStyle = p.col;
+      if (kind === 'snow') {
+        p.y += p.vy * sp; p.x += (Math.sin(fxT * 1.2 + p.ph) * p.sway * .5 + wind) * sp;
+        ctx.beginPath(); ctx.arc(p.x, p.y, p.r, 0, 7); ctx.fill();
+      } else if (kind === 'rain') {
+        p.y += p.vy * sp; p.x += (wind * 3 - 1) * sp;
+        ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(p.x, p.y); ctx.lineTo(p.x + (wind * 3 - 1) * 2, p.y + p.len); ctx.stroke();
+      } else if (kind === 'stars') {
+        ctx.globalAlpha = .15 + .8 * (Math.sin(fxT * p.tw + p.ph) + 1) / 2;
+        ctx.beginPath(); ctx.arc(p.x, p.y, p.r, 0, 7); ctx.fill();
+      } else if (kind === 'fireflies') {
+        p.dir += rnd(-.15, .15); p.x += (Math.cos(p.dir) * p.sp + wind * .3) * sp; p.y += Math.sin(p.dir) * p.sp * sp;
+        const glow = .25 + .75 * (Math.sin(fxT * p.tw * 2 + p.ph) + 1) / 2;
+        const g = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, p.r * 6);
+        g.addColorStop(0, p.col); g.addColorStop(1, p.col + '00');
+        ctx.globalAlpha = glow; ctx.fillStyle = g; ctx.beginPath(); ctx.arc(p.x, p.y, p.r * 6, 0, 7); ctx.fill();
+        if (p.x < -20) p.x = w + 20; if (p.x > w + 20) p.x = -20; if (p.y < -20) p.y = h + 20; if (p.y > h + 20) p.y = -20;
+      } else if (kind === 'sakura' || kind === 'leaves') {
+        p.y += p.vy * sp; p.x += (Math.sin(fxT * 1.5 + p.ph) * p.sway + wind + (kind === 'sakura' ? .3 : 0)) * sp; p.rot += p.vr * sp + Math.sin(fxT + p.ph) * .01;
+        ctx.save(); ctx.translate(p.x, p.y); ctx.rotate(p.rot); ctx.scale(1, .55 + .45 * Math.sin(fxT * 2 + p.ph));
+        ctx.beginPath();
+        if (kind === 'sakura') { ctx.ellipse(0, 0, p.r, p.r * .7, 0, 0, 7); }
+        else { ctx.moveTo(0, -p.r); ctx.quadraticCurveTo(p.r * .9, 0, 0, p.r); ctx.quadraticCurveTo(-p.r * .9, 0, 0, -p.r); }
+        ctx.fill(); ctx.restore();
+      } else if (kind === 'bubbles') {
+        p.y += p.vy * sp; p.x += (Math.sin(fxT + p.ph) * p.sway + wind * .5) * sp;
+        ctx.lineWidth = 1.2; ctx.beginPath(); ctx.arc(p.x, p.y, p.r, 0, 7); ctx.stroke();
+        ctx.globalAlpha = p.a * .8; ctx.beginPath(); ctx.arc(p.x - p.r * .35, p.y - p.r * .35, p.r * .22, 0, 7); ctx.fill();
+      }
+      // Wrap: anything that left the page starts again from its edge.
+      if (kind !== 'stars' && kind !== 'fireflies' && (p.y > h + 30 || p.y < -40 || p.x < -60 || p.x > w + 60)) parts[i] = spawn(kind, w, h, false);
+    }
+    ctx.globalAlpha = 1;
   }
 
   // Called at load and by Rust when settings change.
@@ -201,6 +439,7 @@
     st.setProperty('--nt-width', s.ntWidth + 'px');
     root.dataset.pos = s.ntPos === 'free' ? 'free' : 'grid';
     root.dataset.glass = s.glass;
+    root.dataset.arrbtn = s.ntArrangeBtn;
     if (s.ntPos === 'free') {
       document.body.style.alignItems = document.body.style.justifyContent = '';
       st.setProperty('--nt-items', 'center');
@@ -217,10 +456,15 @@
     q.placeholder = 'Search ' + s.engineName + ' or enter address';
     $('search').hidden = !s.ntSearch;
     $('time').hidden = !s.startClock;
-    $('clock').hidden = s.clockStyle !== 'digital';
+    st.setProperty('--clock-font', { segoe: 'var(--display)', bahnschrift: 'Bahnschrift, var(--display)', mono: '"Cascadia Mono", Consolas, monospace', serif: 'Cambria, Georgia, serif' }[s.clockFont]);
+    st.setProperty('--clock-color', s.clockColor === 'accent' ? 'var(--accent)' : 'var(--text)');
+    $('clock').hidden = s.clockStyle === 'analog';
+    if (s.clockStyle !== 'flip') flipped = '';
     $('analog').style.display = s.clockStyle === 'analog' ? '' : 'none';
+    drawFace(s.analogFace);
     $('sh').style.display = s.clockSeconds ? '' : 'none';
     $('date').hidden = !s.clockDate;
+    $('greet').hidden = !s.clockGreet;
     $('essentials').hidden = !s.startEssentials;
     background(s);
     effects(s);
@@ -286,6 +530,7 @@
 
   renderEssentials(ESSENTIALS);
   applySettings(VELOCITY);
+  if (window.ARRANGE) arrange(true); // opened from Settings → New tab → Arrange
   addEventListener('focus', () => q.focus());
 </script>
 </body>
