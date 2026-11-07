@@ -1,9 +1,9 @@
 ﻿[package]
-name = "zenith"
+name = "velocity"
 version = "0.1.0"
 edition = "2024"
 
 [dependencies]
 tao = "0.37.2"
-windows = { version = "0.62", features = ["Win32_Foundation", "Win32_Graphics_Dwm", "Win32_Graphics_Gdi"], default-features = false }
+windows = { version = "0.62", features = ["Win32_Foundation", "Win32_Graphics_Dwm", "Win32_Graphics_Gdi", "Win32_UI_WindowsAndMessaging"], default-features = false }
 wry = { version = "0.57.1", features = ["devtools"] }

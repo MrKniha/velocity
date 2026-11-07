@@ -2126,6 +2126,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3a3b425286980a367278453f3b6d28cdcb134b574e5a35824a6ff5eebad50bb6"
 
 [[package]]
+name = "velocity"
+version = "0.1.0"
+dependencies = [
+ "tao",
+ "windows",
+ "wry",
+]
+
+[[package]]
 name = "version-compare"
 version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2571,15 +2580,6 @@ dependencies = [
  "quote",
  "syn 3.0.9",
  "synstructure",
-]
-
-[[package]]
-name = "zenith"
-version = "0.1.0"
-dependencies = [
- "tao",
- "windows",
- "wry",
 ]
 
 [[package]]

@@ -1,0 +1,17 @@
+{
+  "detector": {
+    "ignoreRules": [],
+    "ignoreFiles": [],
+    "ignoreValues": [
+      {
+        "rule": "design-system-font",
+        "value": "cambria",
+        "files": [
+          ".impeccable/mocks/decision/model-pick.html"
+        ],
+        "createdAt": "2026-11-06T23:00:59.596Z",
+        "reason": "agent decision: unchosen direction-round sketch (Kinematics Plate), not shipped UI; mocks/decision is exempt per finish review"
+      }
+    ]
+  }
+}
