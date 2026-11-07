@@ -130,31 +130,43 @@
     .bgrow { flex-wrap: wrap; }
   }
   /* History and profiles lists */
-  .find { width: 100%; height: 34px; padding: 0 12px; border: 0; border-radius: 8px; background: var(--field); color: var(--text); font: inherit; outline: none; }
-  .hist { display: flex; align-items: center; gap: 10px; padding: 6px 8px 6px 16px; }
+  .find { width: 100%; height: 32px; padding: 0 10px; border: 0; border-radius: 8px; background: var(--field); color: var(--text); font: inherit; outline: none; }
+  .hist { display: flex; align-items: center; gap: 8px; padding: 8px 10px 8px 16px; }
   .hist + .hist, .day + .hist { border-top: 1px solid var(--hair); }
   .hist img { width: 16px; height: 16px; flex: none; }
   .hist a { flex: 1; min-width: 0; color: inherit; text-decoration: none; cursor: pointer; }
   .hist a b, .hist a span { display: block; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
   .hist a b { font-weight: 500; }
   .hist a span { color: var(--muted-card); font-size: 12px; }
-  .hist a:hover b { text-decoration: underline; }
+  .hist:hover { background: var(--hover); }
   .hist time { color: var(--muted-card); font-size: 12px; font-variant-numeric: tabular-nums; }
-  .day { padding: 14px 16px 6px; font-size: 12px; font-weight: 600; color: var(--muted-card); }
+  .dl { display: flex; align-items: center; gap: 8px; padding: 8px 10px 8px 16px; }
+  .dl + .dl { border-top: 1px solid var(--hair); }
+  .dl > svg { width: 18px; height: 18px; flex: none; fill: none; stroke: var(--muted-card); stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+  .dl .label b { display: block; font-weight: 500; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+  .dl .label { min-width: 0; flex: 1; }
+  .dl.failed .label b { color: var(--muted-card); text-decoration: line-through; }
+  .bar { height: 3px; margin-top: 6px; border-radius: 2px; background: var(--hair); overflow: hidden; }
+  .bar i { display: block; height: 100%; background: var(--accent); }
+  .day { padding: 12px 16px 6px; font-size: 12px; font-weight: 600; color: var(--muted-card); }
+  .day + .hist, .hist + .day { border-top: 1px solid var(--hair); }
   .ib { width: 28px; height: 28px; border: 0; border-radius: 6px; background: none; color: var(--muted-card); display: grid; place-items: center; flex: none; }
   .ib:hover { background: var(--field); color: var(--text); }
   .ib svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
-  .prof { display: flex; align-items: center; gap: 12px; padding: 10px 10px 10px 16px; }
+  .prof { display: flex; align-items: center; gap: 8px; padding: 10px 10px 10px 16px; }
+  .prof .label { margin-left: 4px; }
   .prof + .prof { border-top: 1px solid var(--hair); }
-  .prof .av { width: 30px; height: 30px; border-radius: 50%; display: grid; place-items: center; background: var(--hair); font-weight: 600; flex: none; }
-  .prof .label small { color: var(--accent); margin-left: 6px; }
+  .prof .av { all: unset; box-sizing: border-box; width: 36px; height: 36px; border-radius: 50%; display: grid; place-items: center; background: var(--hair); font-weight: 500; font-size: 15px; flex: none; overflow: hidden; cursor: pointer; position: relative; }
+  .prof .av img { width: 100%; height: 100%; object-fit: cover; }
+  .prof .av:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .prof .label small { margin-left: 6px; padding: 1px 6px; border-radius: 4px; background: var(--field); color: var(--muted-card); font-size: 11.5px; }
   [hidden] { display: none !important; }
 </style>
 </head>
 <body>
 <nav aria-label="Settings sections">
   <header>
-    <svg viewBox="0 0 64 64" aria-hidden="true"><rect width="64" height="64" rx="14" fill="#141416"/><rect x="10" y="29" width="26" height="6" rx="3" fill="#fff" fill-opacity=".35"/><rect x="18" y="20" width="14" height="4" rx="2" fill="#fff" fill-opacity=".2"/><circle cx="42" cy="32" r="10" fill="#fff"/></svg>
+    <svg viewBox="0 0 64 64" aria-hidden="true"><circle cx="32" cy="32" r="31" fill="#16171a" stroke="#fff" stroke-opacity=".16" stroke-width="1.5"/><path d="M18.7 20.7L28.5 43.7L45.3 19.9" fill="none" stroke="#fff" stroke-width="6.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
     <h1>Settings</h1>
   </header>
   <button data-go="look"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M12 3.5a8.5 8.5 0 0 0 0 17c1 0 1.5-.7 1.5-1.5 0-1.3-1.2-1.7-1.2-3 0-1 .8-1.5 1.7-1.5h2c2 0 3.5-1.5 3.5-3.5C19.5 6.8 16.2 3.5 12 3.5z"/></svg>Appearance</button>
@@ -164,6 +176,7 @@
   <button data-go="ess"><svg viewBox="0 0 24 24"><rect x="4" y="4" width="6.5" height="6.5" rx="1.5"/><rect x="13.5" y="4" width="6.5" height="6.5" rx="1.5"/><rect x="4" y="13.5" width="6.5" height="6.5" rx="1.5"/><path d="M16.75 14v5.5M14 16.75h5.5"/></svg>Essentials</button>
   <button data-go="tabs"><svg viewBox="0 0 24 24"><rect x="3.5" y="5" width="17" height="14" rx="2.5"/><path d="M9 5v14"/></svg>Tabs, size, window</button>
   <button data-go="search"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5"/><path d="M20 20l-4.2-4.2"/></svg>Search</button>
+  <button data-go="downloads"><svg viewBox="0 0 24 24"><path d="M12 4v11M7.5 10.5L12 15l4.5-4.5M5 19h14"/></svg>Downloads</button>
   <button data-go="history"><svg viewBox="0 0 24 24"><path d="M4 12a8 8 0 1 0 2.3-5.7M4 4v4h4"/><path d="M12 8v4l3 2"/></svg>History</button>
   <button data-go="profiles"><svg viewBox="0 0 24 24"><circle cx="12" cy="8.5" r="3.5"/><path d="M5 20c.8-3.6 3.6-5.5 7-5.5s6.2 1.9 7 5.5"/></svg>Profiles</button>
   <button data-go="keys"><svg viewBox="0 0 24 24"><rect x="3" y="6.5" width="18" height="11" rx="2"/><path d="M7 10.5h.01M11 10.5h.01M15 10.5h.01M8 14h8"/></svg>Shortcuts</button>
@@ -295,6 +308,11 @@
       <div class="row"><div class="label">Compact mode<span>Hides the tabs to give the page all the room. Move the mouse to that edge of the window and they slide back. <kbd>Ctrl</kbd> <kbd>Alt</kbd> <kbd>C</kbd></span></div><input type="checkbox" class="switch" data-key="compact" aria-label="Compact mode"></div>
       <div class="row"><div class="label">Tab text size<span>Only the text in the tabs and the toolbar</span></div><div class="range"><input type="range" min="12" max="16" data-key="font_size" aria-label="Text size"><output></output></div></div>
     </section>
+    <h3>Address bar</h3>
+    <section>
+      <div class="row top-only"><div class="label">Use wide address bar<span>Lets the address bar take all the free room in the top bar instead of a centred column</span></div><input type="checkbox" class="switch" data-key="wide_url" aria-label="Use wide address bar"></div>
+      <div class="row"><div class="label">Always show full URLs<span>Shows https:// and www. in addresses all the time. When off, they appear only while you edit the address.</span></div><input type="checkbox" class="switch" data-key="full_urls" aria-label="Always show full URLs"></div>
+    </section>
     <h3>Size</h3>
     <section>
       <div class="row"><div class="label">Interface size<span>Makes all of Velocity bigger or smaller: tabs, toolbar, new tab and this settings page. Websites aren't affected.</span></div><div class="range"><input type="range" min="80" max="150" step="5" data-key="ui_scale" aria-label="Interface size"><output></output></div></div>
@@ -314,6 +332,16 @@
     <section><div class="row"><div class="label">Search engine<span>Used when what you type in the address bar or on the new tab isn't a web address</span></div><select id="engine" aria-label="Search engine"></select></div></section>
   </div>
 
+  <div class="page" data-page="downloads">
+    <h2>Downloads</h2><p>Files you downloaded in this profile.</p>
+    <h3>Settings</h3>
+    <section>
+      <div class="row"><div class="label">Ask where to save each file<span>Shows a Save as window for every download. When off, files go straight to your Downloads folder.</span></div><input type="checkbox" class="switch" data-key="ask_download" aria-label="Ask where to save each file"></div>
+    </section>
+    <div style="display:flex;align-items:center;margin:28px 0 6px"><h3 style="margin:0;flex:1">Files</h3><button class="btn" id="dlclear">Clear list</button></div>
+    <section id="dllist"></section>
+  </div>
+
   <div class="page" data-page="history">
     <h2>History</h2><p>Pages you visited in this profile. The address bar and the new tab search suggest from it as you type.</p>
     <h3>Settings</h3>
@@ -327,12 +355,12 @@
   </div>
 
   <div class="page" data-page="profiles">
-    <h2>Profiles</h2><p>Each profile has its own settings, Essentials, history, background, cookies and logins. A profile opens in its own window.</p>
+    <h2>Profiles</h2><p>Each profile has its own settings, Essentials, history, background, cookies and logins. A profile opens in its own window. With more than one profile, Velocity asks which one to use when it starts.</p>
     <h3>Your profiles</h3>
     <section id="proflist"></section>
     <h3>New profile</h3>
     <section>
-      <form class="ess" id="profadd"><input id="profnew" type="text" placeholder="Name, e.g. Work" aria-label="New profile name" maxlength="32" spellcheck="false" autocomplete="off"><button class="btn primary" type="submit">Create and open</button></form>
+      <form class="ess" id="profadd"><input id="profnew" type="text" placeholder="Name, e.g. Work" aria-label="New profile name" maxlength="32" spellcheck="false" autocomplete="off"><button class="btn" type="submit">Create</button></form>
       <div class="err" id="proferr" hidden></div>
     </section>
   </div>
@@ -345,6 +373,7 @@
       <b>Close tab</b><span><kbd>Ctrl</kbd> <kbd>W</kbd></span>
       <b>Next / previous tab</b><span><kbd>Ctrl</kbd> <kbd>Tab</kbd> / <kbd>Ctrl</kbd> <kbd>Shift</kbd> <kbd>Tab</kbd></span>
       <b>Address bar</b><span><kbd>Ctrl</kbd> <kbd>L</kbd></span>
+      <b>Downloads</b><span><kbd>Ctrl</kbd> <kbd>J</kbd></span>
       <b>Compact mode</b><span><kbd>Ctrl</kbd> <kbd>Alt</kbd> <kbd>C</kbd></span>
       <b>Settings</b><span><kbd>Ctrl</kbd> <kbd>,</kbd></span>
       <b>Pin / unpin Essential</b><span>Right-click a tab / tile</span>
@@ -362,7 +391,7 @@
     nt_pos: 'ntPos', glass: 'glass', ui_scale: 'uiScale', page_zoom: 'pageZoom', bg_window: 'bgWindow', frame_blur: 'frameBlur', frame_tint: 'frameTint',
     bg_speed: 'bgSpeed', bg_sound: 'bgSound', bg_volume: 'bgVolume', bg_pause: 'bgPause', nt_arrange_btn: 'ntArrangeBtn',
     bg_focus_x: 'bgFocusX', bg_focus_y: 'bgFocusY', bg_zoom: 'bgZoom', clock_font: 'clockFont', clock_color: 'clockColor', clock_date_fmt: 'clockDateFmt',
-    clock_greet: 'clockGreet', analog_face: 'analogFace', effect_speed: 'effectSpeed', effect_wind: 'effectWind', effect_accent: 'effectAccent', history: 'history' };
+    clock_greet: 'clockGreet', analog_face: 'analogFace', effect_speed: 'effectSpeed', effect_wind: 'effectWind', effect_accent: 'effectAccent', history: 'history', wide_url: 'wideUrl', full_urls: 'fullUrls', ask_download: 'askDownload' };
   const units = { radius: ' px', gap: ' px', sidebar_width: ' px', font_size: ' px', opacity: ' %', clock_size: ' px', bg_dim: ' %', bg_blur: ' px', nt_width: ' px', effect_amount: '', ui_scale: ' %', page_zoom: ' %',
     frame_blur: ' px', frame_tint: ' %', bg_speed: ' %', bg_volume: ' %', bg_focus_x: ' %', bg_focus_y: ' %', bg_zoom: ' %', effect_speed: ' %', effect_wind: '' };
 
@@ -374,9 +403,11 @@
     try { sessionStorage.page = page; } catch {}
     if (page === 'history') send('hist:list:' + $('histfind').value.trim());
     if (page === 'profiles') send('prof:list');
+    if (page === 'downloads') send('dl:list');
   }
   document.querySelectorAll('nav [data-go]').forEach(b => b.onclick = () => go(b.dataset.go));
   let first = 'look'; try { first = sessionStorage.page || first; } catch {}
+  if (window.START_PAGE) first = START_PAGE; // opened from the profile button
   go(first);
 
   const lum = h => [1, 3, 5].map(i => parseInt(h.slice(i, i + 2), 16)).reduce((s, v, i) => s + v * [.2126, .7152, .0722][i], 0) / 255;
@@ -438,6 +469,51 @@
 
   const icon = d => `<svg viewBox="0 0 24 24"><path d="${d}"/></svg>`;
 
+  // Downloads: Rust sends the whole list, newest first ({id, n: file name, u: url, s: running|done|failed, r, t, ts}).
+  const size = b => b < 1024 ? b + ' B' : b < 1048576 ? (b / 1024).toFixed(0) + ' KB' : b < 1073741824 ? (b / 1048576).toFixed(1) + ' MB' : (b / 1073741824).toFixed(2) + ' GB';
+  const hostOf = u => { try { return new URL(u).host; } catch { return ''; } };
+  // "Just now", "5 min ago", "5 hours ago", "Yesterday", "2 days ago", then the date: 18.11.2026.
+  function ago(ts) {
+    const s = Date.now() / 1000 - ts, d = new Date(ts * 1000);
+    const days = Math.round((new Date().setHours(0, 0, 0, 0) - new Date(d).setHours(0, 0, 0, 0)) / 864e5);
+    if (s < 60) return 'Just now';
+    if (s < 3600) return Math.floor(s / 60) + ' min ago';
+    if (days === 0) return Math.floor(s / 3600) === 1 ? '1 hour ago' : Math.floor(s / 3600) + ' hours ago';
+    if (days === 1) return 'Yesterday';
+    if (days < 4) return days + ' days ago';
+    return `${d.getDate()}.${d.getMonth() + 1}.${d.getFullYear()}`;
+  }
+  function renderDownloads(list) {
+    $('dlclear').disabled = !list.some(d => d.s !== 'running');
+    if (!list.length) { $('dllist').innerHTML = '<div class="empty" style="padding:14px 16px">Nothing downloaded yet.</div>'; return; }
+    $('dllist').replaceChildren(...list.map(d => {
+      const row = document.createElement('div');
+      row.className = 'dl ' + d.s;
+      row.insertAdjacentHTML('beforeend', '<svg viewBox="0 0 24 24"><path d="M7 3.5h6.5L18 8v12.5H7z"/><path d="M13.5 3.5V8H18"/></svg>');
+      const label = document.createElement('div'); label.className = 'label';
+      const name = document.createElement('b'); name.textContent = d.n; name.title = d.u;
+      const sub = document.createElement('span');
+      const when = ago(d.ts);
+      if (d.s === 'running') sub.textContent = d.t > 0 ? `${size(d.r)} of ${size(d.t)} · ${Math.floor(d.r * 100 / d.t)} %` : `${size(d.r)} so far`;
+      else if (d.s === 'done') sub.textContent = ['Done', size(d.r), hostOf(d.u), when].filter(Boolean).join(' · ');
+      else sub.textContent = ['Failed or cancelled', hostOf(d.u), when].filter(Boolean).join(' · ');
+      label.append(name, sub);
+      if (d.s === 'running') {
+        const bar = document.createElement('div'); bar.className = 'bar';
+        const fill = document.createElement('i'); fill.style.width = (d.t > 0 ? d.r * 100 / d.t : 0) + '%';
+        bar.append(fill); label.append(bar);
+      }
+      row.append(label);
+      const btn = (text, cmd) => { const b = document.createElement('button'); b.className = 'btn'; b.textContent = text; b.onclick = () => send(`dl:${cmd}:${d.id}`); return b; };
+      const ib = (label, path, cmd) => { const b = document.createElement('button'); b.className = 'ib'; b.title = b.ariaLabel = label; b.innerHTML = icon(path); b.onclick = () => send(`dl:${cmd}:${d.id}`); return b; };
+      if (d.s === 'done') row.append(btn('Open', 'open'), ib('Show in folder', 'M3.5 7.5v10.5h17V9.5h-9L9.5 7.5z', 'show'));
+      if (d.s === 'failed') row.append(btn('Try again', 'retry'));
+      row.append(d.s === 'running' ? ib('Cancel', 'M7 7l10 10M17 7L7 17', 'cancel') : ib('Remove from list', 'M5 7h14M10 7V5h4v2M7 7l1 12h8l1-12', 'remove'));
+      return row;
+    }));
+  }
+  $('dlclear').onclick = () => send('dl:clear');
+
   // History: Rust sends the matching pages, newest first (at most 300), grouped here by day.
   function renderHistory(list, total) {
     $('histcount').textContent = total ? `Deletes all ${total} saved pages. Cookies and logins are kept.` : 'Nothing saved yet.';
@@ -481,17 +557,47 @@
   $('histfind').oninput = () => { clearTimeout(histTimer); histTimer = setTimeout(() => send('hist:list:' + $('histfind').value.trim()), 120); };
   $('histclear').onclick = () => { if (confirm('Delete your whole browsing history in this profile? This can\'t be undone.')) send('hist:clear'); };
 
-  // Profiles: Rust sends every profile name and the one this window runs.
+  // "Used today", "Used yesterday", "Used 3 days ago" or a date; the same wording as the profile picker.
+  const used = t => {
+    if (!t) return 'Not used yet';
+    const day = d => new Date(d.getFullYear(), d.getMonth(), d.getDate());
+    const days = Math.round((day(new Date()) - day(new Date(t * 1000))) / 864e5);
+    if (days <= 0) return 'Used today';
+    if (days === 1) return 'Used yesterday';
+    if (days < 7) return `Used ${days} days ago`;
+    return 'Used ' + new Date(t * 1000).toLocaleDateString(undefined, { day: 'numeric', month: 'short' });
+  };
+
+  // Profiles: Rust sends every profile ({n: name, a: picture file or '', t: last use}) and the one this window runs.
   let profPending = false;
-  function renderProfiles(names, current) {
-    $('proflist').replaceChildren(...names.map(n => {
+  function renderProfiles(list, current) {
+    $('proflist').replaceChildren(...list.map(({ n, a, t }) => {
       const row = document.createElement('div');
       row.className = 'prof';
-      const av = document.createElement('span'); av.className = 'av'; av.textContent = n[0].toUpperCase();
+      const av = document.createElement('button');
+      av.className = 'av'; av.title = av.ariaLabel = 'Change the picture of ' + n;
+      if (a) {
+        const img = document.createElement('img');
+        img.alt = '';
+        img.src = 'https://avatars.velocity.example/' + a.split('?').map((x, i) => i ? x : encodeURIComponent(x)).join('?');
+        av.append(img);
+      } else av.textContent = n[0].toUpperCase();
+      av.onclick = () => send('prof:pic:' + n);
       const label = document.createElement('div'); label.className = 'label'; label.textContent = n;
       if (n === current) { const tag = document.createElement('small'); tag.textContent = 'this window'; label.append(tag); }
-      if (n === 'Default') { const s = document.createElement('span'); s.textContent = 'The profile Velocity opens with'; label.append(s); }
-      row.append(av, label);
+      const sub = document.createElement('span');
+      sub.textContent = used(t);
+      label.append(sub);
+      const pic = document.createElement('button');
+      pic.className = 'btn'; pic.textContent = a ? 'Change picture' : 'Add picture';
+      pic.onclick = () => send('prof:pic:' + n);
+      row.append(av, label, pic);
+      if (a) {
+        const rm = document.createElement('button');
+        rm.className = 'ib'; rm.title = rm.ariaLabel = 'Remove the picture of ' + n; rm.innerHTML = icon('M7 7l10 10M17 7L7 17');
+        rm.onclick = () => send('prof:nopic:' + n);
+        row.append(rm);
+      }
       if (n !== current) {
         const open = document.createElement('button'); open.className = 'btn'; open.textContent = 'Open';
         open.onclick = () => send('prof:open:' + n);
@@ -583,6 +689,7 @@
     document.querySelectorAll('input[type=range]').forEach(r => { if (document.activeElement !== r) r.value = s[keyOf[r.dataset.key]]; r.nextElementSibling.value = r.value + units[r.dataset.key]; });
     document.querySelectorAll('input[type=color]').forEach(c => { if (document.activeElement !== c) c.value = s[keyOf[c.dataset.key]]; c.previousElementSibling.textContent = c.value; });
     document.querySelectorAll('.side-only').forEach(el => el.hidden = s.tabsTop);
+    document.querySelectorAll('.top-only').forEach(el => el.hidden = !s.tabsTop);
     document.querySelectorAll('.clock-only').forEach(el => el.hidden = !s.startClock);
     // Only the options the chosen clock style actually uses (data-clock lists the styles a row applies to).
     document.querySelectorAll('[data-clock]').forEach(el => el.hidden = !s.startClock || !el.dataset.clock.split(' ').includes(s.clockStyle));
