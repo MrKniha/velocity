@@ -1,8 +1,10 @@
 // No console window in release builds.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod history;
 mod icon;
 mod media;
+mod profiles;
 mod settings;
 
 use std::path::{Path, PathBuf};
@@ -53,6 +55,7 @@ enum UserEvent {
     PageKey(String),
     PageNav(u32, String),
     PagePos(String),
+    PageSuggest(u32, String),
     BgInstalled(Option<media::Installed>, String),
     NewTab(String),
     UrlChanged(u32, String),
@@ -71,7 +74,10 @@ struct Browser {
     window: Window,
     ui: WebView,
     ctx: WebContext,
-    dir: PathBuf,
+    base: PathBuf, // the app's data folder; extensions are shared by all profiles
+    dir: PathBuf,  // this profile's folder
+    profile: String,
+    history: history::History,
     proxy: EventLoopProxy<UserEvent>,
     tabs: Vec<Tab>,
     active: usize,
@@ -98,7 +104,7 @@ impl Browser {
             .map(|(k, name, f, c, t, a)| format!("['{k}','{name}','{f}','{c}','{t}','{a}']"))
             .collect();
         format!(
-            "if(!/^https?:$/.test(location.protocol)){{{THEME_JS}window.VELOCITY={};window.ESSENTIALS=[{}];window.ENGINES=[{}];window.PRESETS=[{}];window.FRAME={};window.ARRANGE={};}}",
+            "if(!/^https?:$/.test(location.protocol)){{{THEME_JS}{SUGGEST_JS}window.VELOCITY={};window.ESSENTIALS=[{}];window.ENGINES=[{}];window.PRESETS=[{}];window.FRAME={};window.ARRANGE={};}}",
             self.settings.to_js(),
             essentials.join(","),
             engines.join(","),
@@ -124,7 +130,7 @@ impl Browser {
         let view = builder
             .with_bounds(bounds)
             .with_browser_extensions_enabled(true)
-            .with_extensions_path(self.dir.join("extensions"))
+            .with_extensions_path(self.base.join("extensions"))
             .with_devtools(true)
             .with_initialization_script(PAGE_KEYS_JS)
             .with_initialization_script_for_main_only(if new_tab { init } else { String::new() }, true)
@@ -138,6 +144,8 @@ impl Browser {
                 } else if let Some(p) = body.strip_prefix("ntpos:") {
                     // Dragging on the new tab page; worst case a site rearranges the user's new tab layout.
                     let _ = p1.send_event(UserEvent::PagePos(p.to_string()));
+                } else if let Some(q) = body.strip_prefix("suggest:") {
+                    let _ = p1.send_event(UserEvent::PageSuggest(id, q.to_string()));
                 }
             })
             .with_on_page_load_handler(move |ev, url| {
@@ -177,6 +185,9 @@ impl Browser {
             if tab.url.is_empty() {
                 let _ = tab.view.set_background_color((255, 255, 255, 255));
                 let _ = tab.view.zoom(self.settings.page_zoom as f64 / 100.0);
+            }
+            if self.settings.history {
+                self.history.record(&url, "");
             }
             tab.url = url;
             tab.unseen |= background;
@@ -280,13 +291,15 @@ impl Browser {
             .collect();
         let essentials: Vec<String> = self.essentials.iter().map(|e| js_str(e)).collect();
         let cur = &self.tabs[self.active];
-        self.window.set_title(&format!("{} - {APP}", cur.title));
+        let profile = if self.profile == profiles::DEFAULT { String::new() } else { format!(" ({})", self.profile) };
+        self.window.set_title(&format!("{} - {APP}{profile}", cur.title));
         let _ = self.ui.evaluate_script(&format!(
-            "render([{}],{},[{}],{})",
+            "render([{}],{},[{}],{},{})",
             tabs.join(","),
             cur.id,
             essentials.join(","),
-            self.settings.to_js()
+            self.settings.to_js(),
+            js_str(&self.profile)
         ));
         self.push_frame();
     }
@@ -468,7 +481,43 @@ impl Browser {
                 return;
             }
             "we:scan" => return self.scan_wallpapers(),
+            "hist:clear" => {
+                self.history.clear();
+                return self.show_history("");
+            }
+            "prof:list" => return self.show_profiles(),
             _ => {}
+        }
+        if let Some(q) = msg.strip_prefix("hist:list:") {
+            return self.show_history(q);
+        }
+        if let Some(rest) = msg.strip_prefix("hist:del:") {
+            let (url, q) = rest.split_once('\n').unwrap_or((rest, ""));
+            self.history.remove(url);
+            return self.show_history(q);
+        }
+        if let Some(url) = msg.strip_prefix("hist:open:") {
+            if url.starts_with("https://") || url.starts_with("http://") {
+                self.open_tab(url);
+            }
+            return;
+        }
+        if let Some((cmd, name)) = msg.strip_prefix("prof:").and_then(|m| m.split_once(':')) {
+            let known = profiles::list(&self.base).into_iter().find(|n| n == name);
+            match (cmd, known) {
+                ("new", _) => match profiles::create(&self.base, name) {
+                    Some(n) => profiles::launch(&n),
+                    None => self.settings_js("profileError('That name is taken or not allowed.')"),
+                },
+                ("open", Some(n)) => profiles::launch(&n),
+                ("del", Some(n)) if n != self.profile => {
+                    if !profiles::delete(&self.base, &n) {
+                        self.settings_js("profileError('Close the window of that profile first, then delete it.')");
+                    }
+                }
+                _ => {}
+            }
+            return self.show_profiles();
         }
         if let Some(pick) = msg.strip_prefix("bg:we:") {
             // Only wallpapers from our own scan can be chosen, by library index and folder id.
@@ -495,6 +544,39 @@ impl Browser {
         }
         self.settings.save(&self.dir);
         self.apply_settings();
+    }
+
+    fn settings_js(&self, js: &str) {
+        if let Some(v) = &self.settings_view {
+            let _ = v.evaluate_script(js);
+        }
+    }
+
+    /// The History page: entries matching `q`, newest first.
+    fn show_history(&self, q: &str) {
+        let items: Vec<String> = self
+            .history
+            .search(q, 300)
+            .iter()
+            .map(|e| format!("{{u:{},t:{},ts:{}}}", js_str(&e.url), js_str(&e.title), e.ts))
+            .collect();
+        self.settings_js(&format!("renderHistory([{}],{})", items.join(","), self.history.entries.len()));
+    }
+
+    fn show_profiles(&self) {
+        let names: Vec<String> = profiles::list(&self.base).iter().map(|n| js_str(n)).collect();
+        self.settings_js(&format!("renderProfiles([{}],{})", names.join(","), js_str(&self.profile)));
+    }
+
+    /// Address bar suggestions from history, as a call to the page's `suggestions(query, items)`.
+    fn suggestions_js(&self, q: &str) -> String {
+        let items: Vec<String> = self
+            .history
+            .suggest(q, 6)
+            .iter()
+            .map(|e| format!("{{u:{},t:{}}}", js_str(&e.url), js_str(&e.title)))
+            .collect();
+        format!("window.suggestions&&suggestions({},[{}])", js_str(q), items.join(","))
     }
 
     /// Re-apply everything that depends on settings, live.
@@ -563,6 +645,8 @@ impl Browser {
             ("essential", _) => Ok(arg.parse().map(|i| self.open_essential(i)).unwrap_or(())),
             ("key", _) => Ok(self.shortcut(arg)),
             ("unpeek", _) => Ok(self.set_peek(false)),
+            ("suggest", _) => self.ui.evaluate_script(&self.suggestions_js(arg)),
+            ("sugg", _) => Ok(self.suggest_space(arg.parse().unwrap_or(0.0))),
             ("win", _) => match arg {
                 "min" => Ok(self.window.set_minimized(true)),
                 "max" => Ok(self.window.set_maximized(!self.window.is_maximized())),
@@ -578,6 +662,25 @@ impl Browser {
             _ => Ok(()),
         };
         true
+    }
+
+    /// With tabs on top the tab UI is only as tall as the bar, so while the address bar shows suggestions
+    /// it grows by `extra` CSS px over the page; 0 puts it back.
+    fn suggest_space(&self, extra: f64) {
+        if !self.settings.tabs_top {
+            return;
+        }
+        self.layout();
+        if extra > 0.0 {
+            let (w, h) = logical_size(&self.window);
+            let scale = self.settings.ui_scale as f64 / 100.0;
+            let bar = TOP_BAR * scale;
+            let _ = self.ui.set_bounds(rect((0.0, 0.0, w, (bar + extra * scale).min(h))));
+            bring_to_top(&self.ui);
+        } else {
+            bring_to_top(self.current()); // with window glass the tab UI lies under the page
+            self.show_settings_if_owner();
+        }
     }
 
     /// Compact mode: the cursor reaching the tab UI's edge of the window reveals it.
@@ -787,10 +890,63 @@ const THEME_JS: &str = r#"window.velocityTheme = s => {
 };
 "#;
 
+/// History suggestions under a search field, shared by the address bar and the new tab search.
+/// `velocitySuggest(input, list, submit)`: asks Rust with `suggest:<text>` while typing; Rust answers by
+/// calling `suggestions(text, items)`. Arrow keys walk the list (filling the field), Enter opens.
+const SUGGEST_JS: &str = r#"window.velocitySuggest = (input, box, submit) => {
+  let items = [], sel = -1, typed = '';
+  const draw = () => {
+    box.replaceChildren(...items.map((it, i) => {
+      const li = document.createElement('li'), t = document.createElement('b'), u = document.createElement('span');
+      li.role = 'option'; li.ariaSelected = i === sel; li.id = 'sg' + i;
+      t.textContent = it.t || it.u;
+      u.textContent = it.u.replace(/^https?:\/\/(www\.)?/, '').replace(/\/$/, '');
+      li.append(t, u);
+      li.onmousedown = e => { e.preventDefault(); input.value = it.u; close(); submit(); };
+      return li;
+    }));
+    box.hidden = !items.length;
+    input.setAttribute('aria-expanded', items.length > 0);
+    if (sel >= 0) input.setAttribute('aria-activedescendant', 'sg' + sel); else input.removeAttribute('aria-activedescendant');
+    box.dispatchEvent(new Event('change'));
+  };
+  const close = () => { if (items.length) { items = []; sel = -1; draw(); } };
+  input.setAttribute('role', 'combobox');
+  input.setAttribute('aria-autocomplete', 'list');
+  box.setAttribute('role', 'listbox');
+  window.suggestions = (q, list) => {
+    if (q !== input.value.trim() || document.activeElement !== input) return; // an older answer
+    items = list; sel = -1; draw();
+  };
+  input.addEventListener('input', () => {
+    typed = input.value;
+    const v = input.value.trim();
+    v ? window.ipc.postMessage('suggest:' + v) : close();
+  });
+  input.addEventListener('keydown', e => {
+    if (!items.length) return;
+    const n = items.length;
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      e.preventDefault();
+      sel = e.key === 'ArrowDown' ? (sel + 1 >= n ? -1 : sel + 1) : (sel - 1 < -1 ? n - 1 : sel - 1);
+      input.value = sel < 0 ? typed : items[sel].u;
+      draw();
+    } else if (e.key === 'Escape') {
+      e.stopPropagation(); input.value = typed; close();
+    } else if (e.key === 'Enter') close();
+  });
+  input.addEventListener('blur', close);
+  return close;
+};
+"#;
+
 fn main() -> wry::Result<()> {
-    let dir = data_dir();
-    std::fs::create_dir_all(dir.join("extensions")).ok();
+    let base = data_dir();
+    std::fs::create_dir_all(base.join("extensions")).ok();
+    let profile = profiles::from_args(&base);
+    let dir = profiles::dir(&base, &profile);
     let settings = Settings::load(&dir);
+    let history = history::History::load(&dir);
     let (r, g, b) = settings.frame_rgb();
 
     let event_loop = EventLoopBuilder::<UserEvent>::with_user_event().build();
@@ -819,6 +975,7 @@ fn main() -> wry::Result<()> {
     let ui = WebViewBuilder::new_with_web_context(&mut ctx)
         .with_html(include_str!("pages/sidebar.html"))
         .with_initialization_script(THEME_JS)
+        .with_initialization_script(SUGGEST_JS)
         .with_background_color((r, g, b, 255))
         .with_browser_extensions_enabled(true)
         .with_ipc_handler(move |req| {
@@ -829,7 +986,7 @@ fn main() -> wry::Result<()> {
 
     let essentials = load_essentials(&dir);
     let mut b = Browser {
-        window, ui, ctx, dir, proxy, tabs: Vec::new(), active: 0, next_id: 1, essentials, settings,
+        window, ui, ctx, base, dir, profile, history, proxy, tabs: Vec::new(), active: 0, next_id: 1, essentials, settings,
         settings_view: None, settings_tab: None, peeking: false, we_dirs: Vec::new(), wallpapers: Vec::new(), arrange_next: false,
     };
     set_opacity(&b.window, b.settings.opacity);
@@ -872,8 +1029,17 @@ fn main() -> wry::Result<()> {
                     b.set_url(i, url);
                 }
             }
+            Event::UserEvent(UserEvent::PageSuggest(id, q)) => {
+                // Only our new tab page gets history; once the tab shows a site, the site could read the reply.
+                if let Some(t) = b.index_of(id).map(|i| &b.tabs[i]).filter(|t| t.url.is_empty()) {
+                    let _ = t.view.evaluate_script(&b.suggestions_js(&q));
+                }
+            }
             Event::UserEvent(UserEvent::TitleChanged(id, title)) => {
                 if let Some(i) = b.index_of(id) {
+                    if b.settings.history && b.tabs[i].url.starts_with("http") {
+                        b.history.record(&b.tabs[i].url.clone(), &title);
+                    }
                     b.tabs[i].title = title;
                     b.sync_ui();
                 }

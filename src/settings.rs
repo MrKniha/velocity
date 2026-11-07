@@ -113,6 +113,7 @@ pub struct Settings {
     pub effect_speed: u32,    // %, 25..=300
     pub effect_wind: i32,     // sideways drift, -100..=100
     pub effect_accent: bool,  // tint particles with the accent colour instead of white
+    pub history: bool,        // remember visited pages (for suggestions and the History page)
 }
 
 /// A background file name we wrote ourselves: "bg.<ext>" with a known media extension.
@@ -194,6 +195,7 @@ impl Default for Settings {
             effect_speed: 100,
             effect_wind: 0,
             effect_accent: false,
+            history: true,
         }
     }
 }
@@ -229,7 +231,7 @@ impl Settings {
 
     pub fn save(&self, dir: &Path) {
         let text = format!(
-            "frame={}\ncard={}\ntext={}\naccent={}\nopacity={}\nfont_size={}\nengine={}\ntabs_top={}\nsidebar_right={}\nsidebar_width={}\ncompact={}\ngap={}\nradius={}\nstart_essentials={}\nstart_clock={}\nclock_style={}\nclock_format={}\nclock_weight={}\nclock_size={}\nclock_seconds={}\nclock_date={}\nbg={}\nbg_ver={}\nbg_dim={}\nbg_blur={}\nbg_fit={}\nnt_pos={}\nnt_order={}\nnt_search={}\nnt_width={}\neffect={}\neffect_amount={}\nclock_x={}\nclock_y={}\nsearch_x={}\nsearch_y={}\nui_scale={}\npage_zoom={}\nglass={}\nbg_window={}\nframe_blur={}\nframe_tint={}\nbg_speed={}\nbg_sound={}\nbg_volume={}\nbg_pause={}\nnt_arrange_btn={}\nbg_we={}\nbg_entry={}\nbg_thumb={}\nbg_focus_x={}\nbg_focus_y={}\nbg_zoom={}\nclock_font={}\nclock_color={}\nclock_date_fmt={}\nclock_greet={}\nanalog_face={}\neffect_speed={}\neffect_wind={}\neffect_accent={}\n",
+            "frame={}\ncard={}\ntext={}\naccent={}\nopacity={}\nfont_size={}\nengine={}\ntabs_top={}\nsidebar_right={}\nsidebar_width={}\ncompact={}\ngap={}\nradius={}\nstart_essentials={}\nstart_clock={}\nclock_style={}\nclock_format={}\nclock_weight={}\nclock_size={}\nclock_seconds={}\nclock_date={}\nbg={}\nbg_ver={}\nbg_dim={}\nbg_blur={}\nbg_fit={}\nnt_pos={}\nnt_order={}\nnt_search={}\nnt_width={}\neffect={}\neffect_amount={}\nclock_x={}\nclock_y={}\nsearch_x={}\nsearch_y={}\nui_scale={}\npage_zoom={}\nglass={}\nbg_window={}\nframe_blur={}\nframe_tint={}\nbg_speed={}\nbg_sound={}\nbg_volume={}\nbg_pause={}\nnt_arrange_btn={}\nbg_we={}\nbg_entry={}\nbg_thumb={}\nbg_focus_x={}\nbg_focus_y={}\nbg_zoom={}\nclock_font={}\nclock_color={}\nclock_date_fmt={}\nclock_greet={}\nanalog_face={}\neffect_speed={}\neffect_wind={}\neffect_accent={}\nhistory={}\n",
             self.frame, self.card, self.text, self.accent, self.opacity, self.font_size, self.engine, self.tabs_top,
             self.sidebar_right, self.sidebar_width, self.compact, self.gap, self.radius, self.start_essentials, self.start_clock,
             self.clock_style, self.clock_format, self.clock_weight, self.clock_size, self.clock_seconds, self.clock_date,
@@ -238,7 +240,7 @@ impl Settings {
             self.ui_scale, self.page_zoom, self.glass, self.bg_window, self.frame_blur, self.frame_tint, self.bg_speed,
             self.bg_sound, self.bg_volume, self.bg_pause, self.nt_arrange_btn, self.bg_we, self.bg_entry, self.bg_thumb,
             self.bg_focus_x, self.bg_focus_y, self.bg_zoom, self.clock_font, self.clock_color, self.clock_date_fmt,
-            self.clock_greet, self.analog_face, self.effect_speed, self.effect_wind, self.effect_accent
+            self.clock_greet, self.analog_face, self.effect_speed, self.effect_wind, self.effect_accent, self.history
         );
         let _ = std::fs::write(Self::path(dir), text);
     }
@@ -326,6 +328,7 @@ impl Settings {
             "effect_speed" => put!(self.effect_speed, num(25, 300)),
             "effect_wind" => put!(self.effect_wind, value.parse::<i32>().ok().map(|n| n.clamp(-100, 100))),
             "effect_accent" => put!(self.effect_accent, flag()),
+            "history" => put!(self.history, flag()),
             // Digits, a colon and a workshop folder name: nothing that needs escaping in the pages.
             "bg_we" => {
                 let ok = value.is_empty()
@@ -373,7 +376,7 @@ impl Settings {
     /// Object literal for the pages; every value is a validated hex colour, a key from a fixed set or a number.
     pub fn to_js(&self) -> String {
         format!(
-            "{{frame:'{}',card:'{}',text:'{}',accent:'{}',preset:'{}',opacity:{},fontSize:{},engine:'{}',engineName:'{}',tabsTop:{},sidebarRight:{},sidebarWidth:{},compact:{},gap:{},radius:{},startEssentials:{},startClock:{},clockStyle:'{}',clockFormat:'{}',clockWeight:'{}',clockSize:{},clockSeconds:{},clockDate:{},bg:'{}',bgVer:{},bgDim:{},bgBlur:{},bgFit:'{}',ntPos:'{}',ntOrder:'{}',ntSearch:{},ntWidth:{},effect:'{}',effectAmount:{},clockX:{},clockY:{},searchX:{},searchY:{},uiScale:{},pageZoom:{},glass:'{}',bgWindow:{},frameBlur:{},frameTint:{},bgSpeed:{},bgSound:{},bgVolume:{},bgPause:{},ntArrangeBtn:{},bgWe:'{}',bgEntry:'{}',bgThumb:'{}',bgFocusX:{},bgFocusY:{},bgZoom:{},clockFont:'{}',clockColor:'{}',clockDateFmt:'{}',clockGreet:{},analogFace:'{}',effectSpeed:{},effectWind:{},effectAccent:{}}}",
+            "{{frame:'{}',card:'{}',text:'{}',accent:'{}',preset:'{}',opacity:{},fontSize:{},engine:'{}',engineName:'{}',tabsTop:{},sidebarRight:{},sidebarWidth:{},compact:{},gap:{},radius:{},startEssentials:{},startClock:{},clockStyle:'{}',clockFormat:'{}',clockWeight:'{}',clockSize:{},clockSeconds:{},clockDate:{},bg:'{}',bgVer:{},bgDim:{},bgBlur:{},bgFit:'{}',ntPos:'{}',ntOrder:'{}',ntSearch:{},ntWidth:{},effect:'{}',effectAmount:{},clockX:{},clockY:{},searchX:{},searchY:{},uiScale:{},pageZoom:{},glass:'{}',bgWindow:{},frameBlur:{},frameTint:{},bgSpeed:{},bgSound:{},bgVolume:{},bgPause:{},ntArrangeBtn:{},bgWe:'{}',bgEntry:'{}',bgThumb:'{}',bgFocusX:{},bgFocusY:{},bgZoom:{},clockFont:'{}',clockColor:'{}',clockDateFmt:'{}',clockGreet:{},analogFace:'{}',effectSpeed:{},effectWind:{},effectAccent:{},history:{}}}",
             self.frame, self.card, self.text, self.accent, self.preset(), self.opacity, self.font_size, self.engine,
             self.engine_name(), self.tabs_top, self.sidebar_right, self.sidebar_width, self.compact, self.gap,
             self.radius, self.start_essentials, self.start_clock, self.clock_style, self.clock_format,
@@ -384,7 +387,7 @@ impl Settings {
             self.bg_speed, self.bg_sound, self.bg_volume, self.bg_pause, self.nt_arrange_btn, self.bg_we,
             self.bg_entry, self.bg_thumb, self.bg_focus_x, self.bg_focus_y, self.bg_zoom, self.clock_font,
             self.clock_color, self.clock_date_fmt, self.clock_greet, self.analog_face, self.effect_speed,
-            self.effect_wind, self.effect_accent
+            self.effect_wind, self.effect_accent, self.history
         )
     }
 }

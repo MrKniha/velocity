@@ -109,6 +109,15 @@
   .tile img { width: 20px; height: 20px; }
   [data-dark=true] .tile img { filter: drop-shadow(0 0 .8px rgb(255 255 255 / .9)); }
   .tile span { max-width: 68px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  /* History suggestions under the search field */
+  #sgroup { position: relative; }
+  #sugg { position: absolute; z-index: 4; left: 0; right: 0; top: 54px; margin: 0; padding: 6px; list-style: none; border-radius: 12px; text-align: left;
+    background: var(--card); box-shadow: 0 12px 32px rgb(0 0 0 / .35), inset 0 0 0 1px var(--hair); text-shadow: none; }
+  #sugg li { display: flex; flex-direction: column; padding: 8px 12px; border-radius: 8px; cursor: pointer; min-width: 0; }
+  #sugg li:hover, #sugg li[aria-selected=true] { background: var(--active); }
+  #sugg b, #sugg span { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+  #sugg b { font-weight: 500; }
+  #sugg span { color: var(--muted-card); font-size: 13px; }
   [hidden] { display: none !important; }
 </style>
 </head>
@@ -141,13 +150,15 @@
   <div id="sgroup">
     <form id="search" class="glass" onsubmit="event.preventDefault(); const v = q.value.trim(); if (v) window.ipc.postMessage('nav:' + v)">
       <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5"/><path d="M20 20l-4.2-4.2"/></svg>
-      <input id="q" aria-label="Search or enter address" autofocus autocomplete="off" spellcheck="false">
+      <input id="q" aria-label="Search or enter address" autofocus autocomplete="off" spellcheck="false" aria-controls="sugg">
     </form>
+    <ul id="sugg" aria-label="From your history" hidden></ul>
     <nav id="essentials" aria-label="Essentials"></nav>
   </div>
 </main>
 <script>
   const q = document.getElementById('q');
+  velocitySuggest(q, document.getElementById('sugg'), () => document.getElementById('search').requestSubmit());
   const $ = id => document.getElementById(id);
   const name = u => { try { return new URL(u).hostname.replace(/^www\./, '').split('.')[0]; } catch { return u; } };
   let S = VELOCITY, timer = 0, shown = '', fxKey = '';

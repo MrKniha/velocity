@@ -129,6 +129,25 @@
     .range { flex: 1; } .range input { flex: 1; }
     .bgrow { flex-wrap: wrap; }
   }
+  /* History and profiles lists */
+  .find { width: 100%; height: 34px; padding: 0 12px; border: 0; border-radius: 8px; background: var(--field); color: var(--text); font: inherit; outline: none; }
+  .hist { display: flex; align-items: center; gap: 10px; padding: 6px 8px 6px 16px; }
+  .hist + .hist, .day + .hist { border-top: 1px solid var(--hair); }
+  .hist img { width: 16px; height: 16px; flex: none; }
+  .hist a { flex: 1; min-width: 0; color: inherit; text-decoration: none; cursor: pointer; }
+  .hist a b, .hist a span { display: block; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+  .hist a b { font-weight: 500; }
+  .hist a span { color: var(--muted-card); font-size: 12px; }
+  .hist a:hover b { text-decoration: underline; }
+  .hist time { color: var(--muted-card); font-size: 12px; font-variant-numeric: tabular-nums; }
+  .day { padding: 14px 16px 6px; font-size: 12px; font-weight: 600; color: var(--muted-card); }
+  .ib { width: 28px; height: 28px; border: 0; border-radius: 6px; background: none; color: var(--muted-card); display: grid; place-items: center; flex: none; }
+  .ib:hover { background: var(--field); color: var(--text); }
+  .ib svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+  .prof { display: flex; align-items: center; gap: 12px; padding: 10px 10px 10px 16px; }
+  .prof + .prof { border-top: 1px solid var(--hair); }
+  .prof .av { width: 30px; height: 30px; border-radius: 50%; display: grid; place-items: center; background: var(--hair); font-weight: 600; flex: none; }
+  .prof .label small { color: var(--accent); margin-left: 6px; }
   [hidden] { display: none !important; }
 </style>
 </head>
@@ -145,6 +164,8 @@
   <button data-go="ess"><svg viewBox="0 0 24 24"><rect x="4" y="4" width="6.5" height="6.5" rx="1.5"/><rect x="13.5" y="4" width="6.5" height="6.5" rx="1.5"/><rect x="4" y="13.5" width="6.5" height="6.5" rx="1.5"/><path d="M16.75 14v5.5M14 16.75h5.5"/></svg>Essentials</button>
   <button data-go="tabs"><svg viewBox="0 0 24 24"><rect x="3.5" y="5" width="17" height="14" rx="2.5"/><path d="M9 5v14"/></svg>Tabs, size, window</button>
   <button data-go="search"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5"/><path d="M20 20l-4.2-4.2"/></svg>Search</button>
+  <button data-go="history"><svg viewBox="0 0 24 24"><path d="M4 12a8 8 0 1 0 2.3-5.7M4 4v4h4"/><path d="M12 8v4l3 2"/></svg>History</button>
+  <button data-go="profiles"><svg viewBox="0 0 24 24"><circle cx="12" cy="8.5" r="3.5"/><path d="M5 20c.8-3.6 3.6-5.5 7-5.5s6.2 1.9 7 5.5"/></svg>Profiles</button>
   <button data-go="keys"><svg viewBox="0 0 24 24"><rect x="3" y="6.5" width="18" height="11" rx="2"/><path d="M7 10.5h.01M11 10.5h.01M15 10.5h.01M8 14h8"/></svg>Shortcuts</button>
   <span class="spacer"></span>
   <button onclick="send('reset')"><svg viewBox="0 0 24 24"><path d="M4 11a8 8 0 1 1 2.3 5.7M4 4v7h7"/></svg>Reset all</button>
@@ -293,6 +314,29 @@
     <section><div class="row"><div class="label">Search engine<span>Used when what you type in the address bar or on the new tab isn't a web address</span></div><select id="engine" aria-label="Search engine"></select></div></section>
   </div>
 
+  <div class="page" data-page="history">
+    <h2>History</h2><p>Pages you visited in this profile. The address bar and the new tab search suggest from it as you type.</p>
+    <h3>Settings</h3>
+    <section>
+      <div class="row"><div class="label">Remember visited pages<span>When off, nothing new is saved. What's already here stays until you clear it.</span></div><input type="checkbox" class="switch" data-key="history" aria-label="Remember visited pages"></div>
+      <div class="row"><div class="label">Clear history<span id="histcount">Deletes every page in this list. Cookies and logins are kept.</span></div><button class="btn" id="histclear">Clear all…</button></div>
+    </section>
+    <h3>Pages</h3>
+    <input class="find" id="histfind" type="search" placeholder="Search history" aria-label="Search history" spellcheck="false" style="margin-bottom:10px">
+    <section id="histlist"></section>
+  </div>
+
+  <div class="page" data-page="profiles">
+    <h2>Profiles</h2><p>Each profile has its own settings, Essentials, history, background, cookies and logins. A profile opens in its own window.</p>
+    <h3>Your profiles</h3>
+    <section id="proflist"></section>
+    <h3>New profile</h3>
+    <section>
+      <form class="ess" id="profadd"><input id="profnew" type="text" placeholder="Name, e.g. Work" aria-label="New profile name" maxlength="32" spellcheck="false" autocomplete="off"><button class="btn primary" type="submit">Create and open</button></form>
+      <div class="err" id="proferr" hidden></div>
+    </section>
+  </div>
+
   <div class="page" data-page="keys">
     <h2>Shortcuts</h2><p>They work from the tab bar and from any page.</p>
     <h3>Keyboard</h3>
@@ -318,7 +362,7 @@
     nt_pos: 'ntPos', glass: 'glass', ui_scale: 'uiScale', page_zoom: 'pageZoom', bg_window: 'bgWindow', frame_blur: 'frameBlur', frame_tint: 'frameTint',
     bg_speed: 'bgSpeed', bg_sound: 'bgSound', bg_volume: 'bgVolume', bg_pause: 'bgPause', nt_arrange_btn: 'ntArrangeBtn',
     bg_focus_x: 'bgFocusX', bg_focus_y: 'bgFocusY', bg_zoom: 'bgZoom', clock_font: 'clockFont', clock_color: 'clockColor', clock_date_fmt: 'clockDateFmt',
-    clock_greet: 'clockGreet', analog_face: 'analogFace', effect_speed: 'effectSpeed', effect_wind: 'effectWind', effect_accent: 'effectAccent' };
+    clock_greet: 'clockGreet', analog_face: 'analogFace', effect_speed: 'effectSpeed', effect_wind: 'effectWind', effect_accent: 'effectAccent', history: 'history' };
   const units = { radius: ' px', gap: ' px', sidebar_width: ' px', font_size: ' px', opacity: ' %', clock_size: ' px', bg_dim: ' %', bg_blur: ' px', nt_width: ' px', effect_amount: '', ui_scale: ' %', page_zoom: ' %',
     frame_blur: ' px', frame_tint: ' %', bg_speed: ' %', bg_volume: ' %', bg_focus_x: ' %', bg_focus_y: ' %', bg_zoom: ' %', effect_speed: ' %', effect_wind: '' };
 
@@ -328,6 +372,8 @@
     document.querySelectorAll('nav [data-go]').forEach(b => b.setAttribute('aria-current', b.dataset.go === page));
     $('content').scrollTop = 0;
     try { sessionStorage.page = page; } catch {}
+    if (page === 'history') send('hist:list:' + $('histfind').value.trim());
+    if (page === 'profiles') send('prof:list');
   }
   document.querySelectorAll('nav [data-go]').forEach(b => b.onclick = () => go(b.dataset.go));
   let first = 'look'; try { first = sessionStorage.page || first; } catch {}
@@ -391,6 +437,86 @@
   }
 
   const icon = d => `<svg viewBox="0 0 24 24"><path d="${d}"/></svg>`;
+
+  // History: Rust sends the matching pages, newest first (at most 300), grouped here by day.
+  function renderHistory(list, total) {
+    $('histcount').textContent = total ? `Deletes all ${total} saved pages. Cookies and logins are kept.` : 'Nothing saved yet.';
+    $('histclear').disabled = !total;
+    if (!list.length) { $('histlist').innerHTML = `<div class="empty" style="padding:14px 16px">${total ? 'Nothing matches.' : 'No pages yet.'}</div>`; return; }
+    const day = d => d.toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'long' });
+    const today = day(new Date()), yesterday = day(new Date(Date.now() - 864e5));
+    let last = '';
+    const rows = [];
+    for (const h of list) {
+      const when = new Date(h.ts * 1000), d = day(when);
+      if (d !== last) {
+        last = d;
+        const head = document.createElement('div');
+        head.className = 'day';
+        head.textContent = d === today ? 'Today' : d === yesterday ? 'Yesterday' : d;
+        rows.push(head);
+      }
+      const row = document.createElement('div');
+      row.className = 'hist';
+      const img = document.createElement('img');
+      img.alt = ''; img.src = new URL(h.u).origin + '/favicon.ico'; img.onerror = () => img.style.visibility = 'hidden';
+      const a = document.createElement('a');
+      a.tabIndex = 0; a.title = h.u;
+      a.onclick = () => send('hist:open:' + h.u);
+      a.onkeydown = e => { if (e.key === 'Enter') a.onclick(); };
+      const t = document.createElement('b'); t.textContent = h.t || h.u;
+      const u = document.createElement('span'); u.textContent = h.u;
+      a.append(t, u);
+      const time = document.createElement('time');
+      time.textContent = when.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+      const del = document.createElement('button');
+      del.className = 'ib'; del.title = del.ariaLabel = 'Remove from history'; del.innerHTML = icon('M7 7l10 10M17 7L7 17');
+      del.onclick = () => send('hist:del:' + h.u + '\n' + $('histfind').value.trim());
+      row.append(img, a, time, del);
+      rows.push(row);
+    }
+    $('histlist').replaceChildren(...rows);
+  }
+  let histTimer = 0;
+  $('histfind').oninput = () => { clearTimeout(histTimer); histTimer = setTimeout(() => send('hist:list:' + $('histfind').value.trim()), 120); };
+  $('histclear').onclick = () => { if (confirm('Delete your whole browsing history in this profile? This can\'t be undone.')) send('hist:clear'); };
+
+  // Profiles: Rust sends every profile name and the one this window runs.
+  let profPending = false;
+  function renderProfiles(names, current) {
+    $('proflist').replaceChildren(...names.map(n => {
+      const row = document.createElement('div');
+      row.className = 'prof';
+      const av = document.createElement('span'); av.className = 'av'; av.textContent = n[0].toUpperCase();
+      const label = document.createElement('div'); label.className = 'label'; label.textContent = n;
+      if (n === current) { const tag = document.createElement('small'); tag.textContent = 'this window'; label.append(tag); }
+      if (n === 'Default') { const s = document.createElement('span'); s.textContent = 'The profile Velocity opens with'; label.append(s); }
+      row.append(av, label);
+      if (n !== current) {
+        const open = document.createElement('button'); open.className = 'btn'; open.textContent = 'Open';
+        open.onclick = () => send('prof:open:' + n);
+        row.append(open);
+        if (n !== 'Default') {
+          const del = document.createElement('button');
+          del.className = 'ib'; del.title = del.ariaLabel = 'Delete ' + n; del.innerHTML = icon('M5 7h14M10 7V5h4v2M7 7l1 12h8l1-12');
+          del.onclick = () => { if (confirm(`Delete the profile "${n}" with its settings, history, cookies and logins? This can't be undone.`)) send('prof:del:' + n); };
+          row.append(del);
+        }
+      }
+      return row;
+    }));
+    if (profPending) { profPending = false; $('profnew').value = ''; }
+  }
+  function profileError(msg) { profPending = false; $('proferr').textContent = msg; $('proferr').hidden = false; }
+  $('profadd').onsubmit = e => {
+    e.preventDefault();
+    const v = $('profnew').value.trim();
+    if (!v) return;
+    if (!/^[\p{L}\p{N} _-]{1,32}$/u.test(v)) return profileError('Use letters, numbers, spaces, - and _ only.');
+    profPending = true;
+    send('prof:new:' + v);
+  };
+  $('profnew').oninput = () => $('proferr').hidden = true;
   let pending = null;
   function renderEssentials(list) {
     if (pending) { clearTimeout(pending); pending = null; $('essnew').value = ''; $('esserr').hidden = true; }
