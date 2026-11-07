@@ -23,8 +23,24 @@
   .row { display: flex; align-items: center; }
   #drag { min-width: 40px; align-self: stretch; }
 
+  /* Window glass: the wallpaper, blurred and tinted with the frame colour, fills this webview. With the
+     full-window layout the webview lies under the whole window (the page sits on top), so the UI itself is
+     confined to its column or bar below. #wall is aligned to the window via velocityFrame(). */
+  #wall { position: fixed; z-index: -1; overflow: hidden; display: none; }
+  [data-wall=true] #wall { display: block; }
+  [data-wall=true], [data-wall=true] body { background: transparent; }
+  #wall > img, #wall > video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; filter: blur(var(--wall-blur, 24px)); transform: scale(1.08); }
+  #wall::after { content: ""; position: absolute; inset: 0; background: var(--frame); opacity: var(--wall-tint, .45); }
+  [data-wall=true] .tile, [data-wall=true] #urlform { background: rgb(255 255 255 / .1); }
+  [data-wall=true][data-dark=false] .tile, [data-wall=true][data-dark=false] #urlform { background: rgb(255 255 255 / .45); }
+  [data-full=true][data-layout=side] body { position: fixed; top: 0; bottom: 0; left: 0; width: var(--sw); }
+  [data-full=true][data-layout=side][data-side=right] body { left: auto; right: 0; }
+  [data-full=true][data-layout=top] body { position: fixed; top: 0; left: 0; right: 0; height: 80px; }
+
   #urlform { display: flex; align-items: center; gap: 8px; height: 34px; padding: 0 10px; border-radius: 8px; background: var(--field); }
-  #urlform:focus-within { background: var(--active); box-shadow: inset 0 0 0 1px var(--hair); }
+  /* The field's own rounded ring shows focus; the browser's square outline on the inner input is turned off. */
+  #urlform:focus-within { background: var(--active); box-shadow: 0 0 0 1.5px color-mix(in srgb, var(--accent) 55%, transparent); }
+  #urlform input:focus, #urlform input:focus-visible { outline: none; }
   #urlform svg { color: var(--muted); width: 14px; height: 14px; flex: none; }
   input { flex: 1; min-width: 0; height: 100%; border: 0; background: none; color: var(--text); font: inherit; outline: none; }
   input::placeholder { color: var(--muted); }
@@ -42,12 +58,16 @@
   #new svg { width: 14px; height: 14px; }
 
   #tabs { margin: 0; padding: 0; list-style: none; scrollbar-width: none; }
-  .tab { display: flex; align-items: center; gap: 9px; height: 34px; padding: 0 4px 0 10px; color: var(--muted); border-radius: 8px; min-width: 0; }
+  .tab { position: relative; display: flex; align-items: center; gap: 9px; height: 34px; padding: 0 4px 0 10px; color: var(--muted); border-radius: 8px; min-width: 0;
+    transition: background-color .15s ease-out, color .15s ease-out, box-shadow .15s ease-out; }
   .tab:hover { color: var(--text); background: var(--hover); }
-  .tab.active { color: var(--text); background: var(--active); }
+  .tab.active { color: var(--text); background: var(--active); font-weight: 500; box-shadow: 0 1px 2px rgb(0 0 0 / .18), inset 0 0 0 1px var(--hair); }
+  .tab:active { transform: scale(.985); }
+  .tab .mark[hidden] { display: none; }
+  @media (prefers-reduced-motion: reduce) { .tab { transition: none; } }
   .tab img, .tab .blank { width: 16px; height: 16px; flex: none; }
   .tab .blank { background: radial-gradient(circle, var(--muted) 2.5px, transparent 3px); }
-  .tab span { flex: 1; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+  .tab .name { flex: 1; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
   .tab .mark { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); flex: none; }
   .tab .x { width: 22px; height: 22px; display: none; place-items: center; border-radius: 6px; color: var(--muted); flex: none; }
   .tab .x svg { width: 12px; height: 12px; }
@@ -86,7 +106,11 @@
   [data-layout=top] #drag { flex: 1; }
   [data-layout=side] #br { display: none; }
   [data-layout=top] #tabs { display: flex; gap: 2px; align-items: end; overflow-x: auto; padding-top: 6px; min-width: 0; max-width: calc(100% - 180px); }
+  /* Top bar tabs look like tabs: thin dividers between inactive ones, the active one a raised card. */
   [data-layout=top] .tab { flex: 0 1 200px; min-width: 96px; height: 32px; }
+  [data-layout=top] .tab + .tab::before { content: ""; position: absolute; left: -1px; top: 9px; bottom: 9px; width: 1px; background: var(--hair); transition: opacity .15s; }
+  [data-layout=top] .tab.active::before, [data-layout=top] .tab.active + .tab::before,
+  [data-layout=top] .tab:hover::before, [data-layout=top] .tab:hover + .tab::before { opacity: 0; }
   [data-layout=top] #new { width: 28px; height: 28px; justify-content: center; align-self: end; margin-bottom: 2px; }
   [data-layout=top] #new .label { display: none; }
   [data-layout=top] #win { align-items: start; padding-top: 6px; }
@@ -101,6 +125,7 @@
 </style>
 </head>
 <body>
+  <div id="wall" aria-hidden="true"></div>
   <div id="grip" onmousedown="send('resize')"></div>
   <div id="nav" class="row">
     <button class="ib" title="Back (Alt+Left)" aria-label="Back" onclick="send('back')"><svg viewBox="0 0 24 24"><path d="M15 18l-6-6 6-6"/></svg></button>
@@ -141,50 +166,126 @@
   };
   function focusUrl() { url.focus(); url.select(); }
 
+  // Window glass: show the new tab wallpaper behind the tab UI, aligned with the window.
+  let wallSrc = '', frame = null, S = null;
+  function wall(s) {
+    S = s;
+    const root = document.documentElement, on = s.bgWindow && !!s.bg;
+    root.dataset.wall = on;
+    root.dataset.full = on && !s.compact; // matches window_glass() in main.rs
+    root.style.setProperty('--sw', s.sidebarWidth + 'px');
+    root.style.setProperty('--wall-blur', s.frameBlur + 'px');
+    root.style.setProperty('--wall-tint', s.frameTint / 100);
+    // Behind blurred glass a still looks the same as a moving picture, so videos and web wallpapers use their
+    // thumbnail here when there is one: one video decoder (or one live page) for the whole window, not two.
+    const moving = s.bg === 'bg.web' || /\.(mp4|webm)$/.test(s.bg);
+    const file = moving ? s.bgThumb || (s.bg === 'bg.web' ? '' : s.bg) : s.bg;
+    const src = on && file ? `https://bg.velocity.example/${file}?v=${s.bgVer}` : '';
+    if (src !== wallSrc) {
+      wallSrc = src;
+      const el = !src ? null : /\.(mp4|webm)$/.test(file)
+        ? Object.assign(document.createElement('video'), { src, autoplay: true, loop: true, muted: true, playsInline: true })
+        : Object.assign(document.createElement('img'), { src, alt: '' });
+      $('wall').replaceChildren(...(el ? [el] : []));
+    }
+    const v = $('wall').querySelector('video');
+    if (v) v.playbackRate = s.bgSpeed / 100;
+    if (frame) velocityFrame(frame);
+  }
+  // Called by Rust with the window size and where this webview sits in it (logical px).
+  function velocityFrame(f) {
+    frame = f;
+    const z = (S ? S.uiScale : 100) / 100, w = $('wall').style;
+    w.left = -f.uiX / z + 'px'; w.top = -f.uiY / z + 'px';
+    w.width = f.w / z + 'px'; w.height = f.h / z + 'px';
+  }
+  // The wallpaper video only needs to play while the window is visible.
+  document.addEventListener('visibilitychange', () => {
+    const v = $('wall').querySelector('video');
+    if (v && S && S.bgPause) document.hidden ? v.pause() : v.play().catch(() => {});
+  });
+
   // Called from Rust with the whole state on every change.
   function render(tabs, active, essentials, s) {
     const root = document.documentElement.dataset;
     window.velocityTheme(s);
+    wall(s);
     root.layout = s.tabsTop ? 'top' : 'side';
     root.side = s.sidebarRight ? 'right' : 'left';
     const cur = tabs.find(t => t.id === active);
-    grid.replaceChildren(...essentials.map((e, i) => {
-      const tile = document.createElement('div');
-      tile.className = 'tile' + (cur && host(cur.url) === host(e) ? ' active' : '');
-      tile.role = 'listitem';
-      tile.tabIndex = 0;
-      tile.title = host(e) + '\nRight-click to unpin';
-      tile.onclick = () => send('essential:' + i);
-      tile.onkeydown = ev => { if (ev.key === 'Enter') send('essential:' + i); };
-      tile.oncontextmenu = ev => { ev.preventDefault(); send('unpin:' + e); };
-      tile.append(icon(e));
-      return tile;
-    }));
-    list.replaceChildren(...tabs.map(t => {
-      const li = document.createElement('li');
-      li.className = 'tab' + (t.id === active ? ' active' : '');
-      li.role = 'tab';
-      li.tabIndex = 0;
-      li.ariaSelected = t.id === active;
-      li.title = t.title + (t.url ? '\n' + t.url + '\nRight-click to pin to Essentials' : '');
-      const span = document.createElement('span');
-      span.textContent = t.title || t.url;
-      const x = document.createElement('button');
-      x.className = 'x';
-      x.ariaLabel = 'Close tab';
-      x.innerHTML = '<svg viewBox="0 0 24 24"><path d="M7 7l10 10M17 7L7 17"/></svg>';
-      x.onclick = e => { e.stopPropagation(); send('close:' + t.id); };
-      li.onclick = () => send('select:' + t.id);
-      li.onkeydown = e => { if (e.key === 'Enter') send('select:' + t.id); };
-      li.onauxclick = e => { if (e.button === 1) send('close:' + t.id); };
-      li.oncontextmenu = e => { e.preventDefault(); if (t.url) send('pin:' + t.id); };
-      li.append(icon(t.url), span);
-      if (t.unseen) { const m = document.createElement('i'); m.className = 'mark'; m.title = 'Loaded in the background'; li.append(m); }
-      li.append(x);
+    // Rebuild the Essentials only when the list itself changed; otherwise just move the highlight.
+    const essKey = essentials.join('\n');
+    if (grid.dataset.key !== essKey) {
+      grid.dataset.key = essKey;
+      grid.replaceChildren(...essentials.map((e, i) => {
+        const tile = document.createElement('div');
+        tile.className = 'tile';
+        tile.dataset.host = host(e);
+        tile.role = 'listitem';
+        tile.tabIndex = 0;
+        tile.title = host(e) + '\nRight-click to unpin';
+        tile.onclick = () => send('essential:' + i);
+        tile.onkeydown = ev => { if (ev.key === 'Enter') send('essential:' + i); };
+        tile.oncontextmenu = ev => { ev.preventDefault(); send('unpin:' + e); };
+        tile.append(icon(e));
+        return tile;
+      }));
+    }
+    for (const tile of grid.children) tile.classList.toggle('active', !!cur && host(cur.url) === tile.dataset.host);
+
+    /* Tabs are updated in place, keyed by id: switching tabs only moves the highlight, so favicons don't
+       reload and blink, hover stays put and the active background can fade instead of jumping. */
+    const old = new Map([...list.children].map(li => [li.dataset.id, li]));
+    const next = tabs.map(t => {
+      const li = old.get(String(t.id)) || makeTab(t.id);
+      updateTab(li, t, t.id === active);
       return li;
-    }));
-    list.querySelector('.tab.active')?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+    });
+    if (next.length !== list.children.length || next.some((li, i) => list.children[i] !== li)) list.replaceChildren(...next);
+    if (active !== lastActive) {
+      lastActive = active;
+      list.querySelector('.tab.active')?.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'smooth' });
+    }
     if (cur && document.activeElement !== url) url.value = cur.url;
+  }
+  let lastActive = null;
+
+  function makeTab(id) {
+    const li = document.createElement('li');
+    li.className = 'tab';
+    li.dataset.id = id;
+    li.role = 'tab';
+    li.tabIndex = 0;
+    const span = document.createElement('span');
+    span.className = 'name';
+    const mark = document.createElement('i');
+    mark.className = 'mark';
+    mark.title = 'Loaded in the background';
+    const x = document.createElement('button');
+    x.className = 'x';
+    x.ariaLabel = 'Close tab';
+    x.innerHTML = '<svg viewBox="0 0 24 24"><path d="M7 7l10 10M17 7L7 17"/></svg>';
+    x.onclick = e => { e.stopPropagation(); send('close:' + id); };
+    li.onclick = () => send('select:' + id);
+    li.onkeydown = e => { if (e.key === 'Enter') send('select:' + id); };
+    li.onauxclick = e => { if (e.button === 1) send('close:' + id); };
+    li.oncontextmenu = e => { e.preventDefault(); if (li.dataset.url) send('pin:' + id); };
+    li.append(icon(''), span, mark, x);
+    return li;
+  }
+
+  function updateTab(li, t, isActive) {
+    li.classList.toggle('active', isActive);
+    li.ariaSelected = isActive;
+    li.dataset.url = t.url;
+    li.title = t.title + (t.url ? '\n' + t.url + '\nRight-click to pin to Essentials' : '');
+    li.querySelector('.name').textContent = t.title || t.url;
+    li.querySelector('.mark').hidden = !t.unseen;
+    const site = favicon(t.url);
+    if (li.dataset.icon !== site) { // only when the site changes, not on every update
+      li.dataset.icon = site;
+      li.firstChild.replaceWith(icon(t.url));
+    }
   }
 
   // Compact mode: Rust reveals the tab UI at the window edge; leaving it hides it again unless typing.

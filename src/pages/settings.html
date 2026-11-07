@@ -92,6 +92,8 @@
   .wp span { display: block; padding: 6px 2px 0; font-size: 12.5px; color: var(--text); overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
   .wp small { display: block; padding: 0 2px; font-size: 11.5px; }
   .wp:hover div { box-shadow: 0 0 0 2px var(--accent); }
+  .wp[aria-pressed=true] div { box-shadow: 0 0 0 2.5px var(--accent); }
+  .wp[aria-pressed=true] small::after { content: " · in use"; color: var(--accent); }
   .empty { color: var(--muted-card); padding: 4px 0; }
 
   /* 3x3 position picker */
@@ -168,11 +170,27 @@
     <h3>Background</h3>
     <section>
       <div class="stack bgrow"><div id="bgprev">No background</div>
-        <div class="label">Image, GIF or video<span>PNG, JPG, WebP, GIF, MP4 or WebM. Videos play muted on a loop.</span>
+        <div class="label">Image, GIF or video<span>PNG, JPG, WebP, GIF, MP4 or WebM. Videos loop; their sound and speed are set below.</span>
           <div class="btns" style="margin-top:10px"><button class="btn primary" onclick="send('bg:pick')">Choose file…</button><button class="btn" id="bgclear" onclick="send('bg:clear')">Remove</button></div></div></div>
       <div class="row bg-only"><div class="label">Darken<span>Lays a dark tint over the picture so the clock and text stay readable</span></div><div class="range"><input type="range" min="0" max="80" data-key="bg_dim" aria-label="Darken background"><output></output></div></div>
       <div class="row bg-only"><div class="label">Blur<span>Softens the picture so it sits behind the content</span></div><div class="range"><input type="range" min="0" max="20" data-key="bg_blur" aria-label="Blur background"><output></output></div></div>
-      <div class="row bg-only"><div class="label">Fit<span>Fill crops the picture to cover the page; Whole shows all of it, with bars if needed</span></div><div class="seg" data-key="bg_fit"><button data-v="cover">Fill</button><button data-v="contain">Whole</button></div></div>
+      <div class="row bg-only"><div class="label">Fit<span>Auto fills the page with big pictures and keeps small ones (like Wallpaper Engine previews) sharp and centred over a blurred copy. Fill always covers the page; Whole always shows all of it.</span></div><div class="seg" data-key="bg_fit"><button data-v="auto">Auto</button><button data-v="cover">Fill</button><button data-v="contain">Whole</button></div></div>
+      <div class="row fill-only"><div class="label">Focus left–right<span>Fill crops the picture; this picks which part stays in view</span></div><div class="range"><input type="range" min="0" max="100" step="5" data-key="bg_focus_x" aria-label="Focus left to right"><output></output></div></div>
+      <div class="row fill-only"><div class="label">Focus top–bottom</div><div class="range"><input type="range" min="0" max="100" step="5" data-key="bg_focus_y" aria-label="Focus top to bottom"><output></output></div></div>
+      <div class="row fill-only"><div class="label">Zoom<span>Crop in further around the focus point</span></div><div class="range"><input type="range" min="100" max="200" step="5" data-key="bg_zoom" aria-label="Zoom"><output></output></div></div>
+    </section>
+    <h3 class="video-only">Video wallpaper</h3>
+    <section class="video-only">
+      <div class="row"><div class="label">Playback speed<span>100 % is the original speed</span></div><div class="range"><input type="range" min="25" max="200" step="25" data-key="bg_speed" aria-label="Playback speed"><output></output></div></div>
+      <div class="row"><div class="label">Sound<span>Play the video's audio while the new tab is open</span></div><input type="checkbox" class="switch" data-key="bg_sound" aria-label="Play sound"></div>
+      <div class="row sound-only"><div class="label">Volume</div><div class="range"><input type="range" min="0" max="100" step="5" data-key="bg_volume" aria-label="Volume"><output></output></div></div>
+      <div class="row"><div class="label">Pause when hidden<span>Stops the video while you're on another tab or the window is minimised. Saves battery and CPU.</span></div><input type="checkbox" class="switch" data-key="bg_pause" aria-label="Pause when hidden"></div>
+    </section>
+    <h3 class="bg-only">Window glass</h3>
+    <section class="bg-only">
+      <div class="row"><div class="label">Wallpaper behind the whole window<span>The tabs and the frame around the page show the same wallpaper, blurred, like frosted glass. The page lines up with it.</span></div><input type="checkbox" class="switch" data-key="bg_window" aria-label="Wallpaper behind the whole window"></div>
+      <div class="row glasswin-only"><div class="label">Frame blur<span>How soft the wallpaper looks behind the tabs</span></div><div class="range"><input type="range" min="0" max="40" data-key="frame_blur" aria-label="Frame blur"><output></output></div></div>
+      <div class="row glasswin-only"><div class="label">Frame tint<span>How much of the Background colour lies over it. Higher keeps the tab text easier to read.</span></div><div class="range"><input type="range" min="0" max="90" step="5" data-key="frame_tint" aria-label="Frame tint"><output></output></div></div>
     </section>
     <h3>Glass</h3>
     <section>
@@ -181,12 +199,20 @@
     </section>
     <h3>Wallpaper Engine</h3>
     <section class="stack">
-      <div class="row" style="padding:0 0 12px;min-height:0"><div class="label">Import from Wallpaper Engine<span>Video wallpapers play as they are; scene and web wallpapers use their preview image.</span></div><button class="btn" onclick="this.textContent='Searching…';send('we:scan')" id="wescan">Find wallpapers</button></div>
+      <div class="row" style="padding:0 0 12px;min-height:0"><div class="label">Import from Wallpaper Engine<span>Lists the wallpapers you subscribed to in the Steam Workshop. Video and web wallpapers run live in Velocity. Scene wallpapers are built from many animated layers that only Wallpaper Engine can draw, so Velocity shows their preview, kept sharp with Auto fit.</span></div><button class="btn" onclick="this.textContent='Searching…';send('we:scan')" id="wescan">Find wallpapers</button></div>
+      <div id="wetools" hidden style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:12px">
+        <input id="wefind" type="text" placeholder="Search wallpapers" aria-label="Search wallpapers" spellcheck="false" style="flex:1;min-width:160px;height:32px;padding:0 10px;border:0;border-radius:8px;background:var(--field);color:var(--text);font:inherit;outline:none">
+        <div class="seg" id="wekind"><button data-v="all" aria-pressed="true">All</button><button data-v="video">Video</button><button data-v="scene">Scene</button><button data-v="web">Web</button></div>
+        <span id="wecount" style="color:var(--muted-card)"></span>
+      </div>
+      <div id="webusy" hidden class="empty" style="margin-bottom:10px">Copying the wallpaper… large videos can take a few seconds.</div>
       <div id="we"></div>
     </section>
     <h3>Layout</h3>
     <section>
-      <div class="row"><div class="label">Position<span>Pick a spot on the grid, or choose Free and drag the clock and the search box anywhere: open a new tab and press Arrange in its bottom-right corner.</span></div><div style="display:flex;gap:10px;align-items:center"><div class="pos" id="pos" role="group" aria-label="Position"></div><div class="seg" data-key="nt_pos"><button data-v="free">Free</button></div></div></div>
+      <div class="row"><div class="label">Position<span>Pick a spot on the grid, or choose Free to place the clock and the search box anywhere with Arrange below.</span></div><div style="display:flex;gap:10px;align-items:center"><div class="pos" id="pos" role="group" aria-label="Position"></div><div class="seg" data-key="nt_pos"><button data-v="free">Free</button></div></div></div>
+      <div class="row"><div class="label">Arrange by dragging<span>Opens the new tab with the clock and the search box ready to drag. Press Done or Esc there when finished.</span></div><button class="btn primary" onclick="send('arrange')">Arrange…</button></div>
+      <div class="row"><div class="label">Show Arrange button on the new tab<span>A small button in its bottom-right corner, visible when you hover the page</span></div><input type="checkbox" class="switch" data-key="nt_arrange_btn" aria-label="Show Arrange button"></div>
       <div class="row"><div class="label">Order<span>Which comes first from the top (grid positions only)</span></div><div class="seg" data-key="nt_order"><button data-v="clock">Clock first</button><button data-v="search">Search first</button></div></div>
       <div class="row"><div class="label">Show search field</div><input type="checkbox" class="switch" data-key="nt_search" aria-label="Show search field"></div>
       <div class="row"><div class="label">Search box width</div><div class="range"><input type="range" min="320" max="760" step="20" data-key="nt_width" aria-label="Content width"><output></output></div></div>
@@ -199,12 +225,19 @@
     <h3>Clock</h3>
     <section>
       <div class="row"><div class="label">Show clock</div><input type="checkbox" class="switch" data-key="start_clock" aria-label="Show clock"></div>
-      <div class="row clock-only"><div class="label">Style</div><div class="seg" data-key="clock_style"><button data-v="digital">Digital</button><button data-v="analog">Analog</button></div></div>
-      <div class="row clock-only"><div class="label">Time format<span>System follows your Windows setting</span></div><div class="seg" data-key="clock_format"><button data-v="auto">System</button><button data-v="12">12 h</button><button data-v="24">24 h</button></div></div>
-      <div class="row clock-only digital-only"><div class="label">Weight<span>Thickness of the numbers</span></div><div class="seg" data-key="clock_weight"><button data-v="thin">Thin</button><button data-v="regular">Regular</button><button data-v="bold">Bold</button></div></div>
-      <div class="row clock-only"><div class="label">Size<span>Digital: height of the numbers. Analog: the dial grows with it.</span></div><div class="range"><input type="range" min="32" max="120" step="4" data-key="clock_size" aria-label="Clock size"><output></output></div></div>
-      <div class="row clock-only"><div class="label">Show seconds</div><input type="checkbox" class="switch" data-key="clock_seconds" aria-label="Show seconds"></div>
+      <div class="row clock-only"><div class="label">Style<span>Digital: one line. Stacked: hours over minutes. Flip: cards that fold over when the time changes. Words: "It's quarter past ten". Analog: hands on a dial.</span></div>
+        <div class="seg" data-key="clock_style"><button data-v="digital">Digital</button><button data-v="stacked">Stacked</button><button data-v="flip">Flip</button><button data-v="words">Words</button><button data-v="analog">Analog</button></div></div>
+      <div class="row clock-only" data-clock="digital stacked flip words"><div class="label">Font<span>All of them come with Windows</span></div>
+        <div class="seg" data-key="clock_font"><button data-v="segoe" style="font-family:'Segoe UI Variable Display'">Segoe</button><button data-v="bahnschrift" style="font-family:Bahnschrift">Bahnschrift</button><button data-v="mono" style="font-family:'Cascadia Mono',Consolas">Mono</button><button data-v="serif" style="font-family:Cambria,Georgia">Serif</button></div></div>
+      <div class="row clock-only" data-clock="digital stacked flip words"><div class="label">Colour<span>Text colour, or your accent colour</span></div><div class="seg" data-key="clock_color"><button data-v="text">Text</button><button data-v="accent">Accent</button></div></div>
+      <div class="row clock-only" data-clock="analog"><div class="label">Dial<span>What's on the face of the analog clock</span></div><div class="seg" data-key="analog_face"><button data-v="ticks">Ticks</button><button data-v="numbers">Numbers</button><button data-v="minimal">Minimal</button></div></div>
+      <div class="row clock-only" data-clock="digital stacked flip"><div class="label">Time format<span>System follows your Windows setting</span></div><div class="seg" data-key="clock_format"><button data-v="auto">System</button><button data-v="12">12 h</button><button data-v="24">24 h</button></div></div>
+      <div class="row clock-only" data-clock="digital stacked flip words"><div class="label">Weight<span>Thickness of the numbers</span></div><div class="seg" data-key="clock_weight"><button data-v="thin">Thin</button><button data-v="regular">Regular</button><button data-v="bold">Bold</button></div></div>
+      <div class="row clock-only"><div class="label">Size<span>How big the clock is</span></div><div class="range"><input type="range" min="32" max="120" step="4" data-key="clock_size" aria-label="Clock size"><output></output></div></div>
+      <div class="row clock-only" data-clock="digital flip analog"><div class="label">Show seconds</div><input type="checkbox" class="switch" data-key="clock_seconds" aria-label="Show seconds"></div>
       <div class="row clock-only"><div class="label">Show date</div><input type="checkbox" class="switch" data-key="clock_date" aria-label="Show date"></div>
+      <div class="row clock-only date-only"><div class="label">Date format<span>Long: Saturday, 7 November. Short: Sat, 7 Nov. Numbers: 07/11/2026 (in your Windows format).</span></div><div class="seg" data-key="clock_date_fmt"><button data-v="long">Long</button><button data-v="short">Short</button><button data-v="numeric">Numbers</button></div></div>
+      <div class="row clock-only"><div class="label">Greeting<span>"Good morning", "Good afternoon"… under the clock</span></div><input type="checkbox" class="switch" data-key="clock_greet" aria-label="Show greeting"></div>
     </section>
   </div>
 
@@ -212,8 +245,12 @@
     <h2>Effects</h2><p>Animated weather over the new tab. Turned off automatically when Windows asks for reduced motion.</p>
     <h3>Effect</h3>
     <section>
-      <div class="row"><div class="label">Effect</div><div class="seg" data-key="effect"><button data-v="none">None</button><button data-v="snow">Snow</button><button data-v="rain">Rain</button><button data-v="stars">Stars</button></div></div>
-      <div class="row fx-only"><div class="label">Amount<span>How many flakes, drops or stars. More looks fuller but uses a little more power.</span></div><div class="range"><input type="range" min="10" max="300" step="10" data-key="effect_amount" aria-label="Effect amount"><output></output></div></div>
+      <div class="stack"><div class="label" style="margin-bottom:10px">Effect</div>
+        <div class="seg" data-key="effect"><button data-v="none">None</button><button data-v="snow">Snow</button><button data-v="rain">Rain</button><button data-v="stars">Stars</button><button data-v="fireflies">Fireflies</button><button data-v="sakura">Sakura</button><button data-v="leaves">Leaves</button><button data-v="bubbles">Bubbles</button><button data-v="matrix">Matrix</button><button data-v="aurora">Aurora</button></div></div>
+      <div class="row fx-only fx-count"><div class="label">Amount<span>How many flakes, drops, petals or columns. More looks fuller but uses a little more power.</span></div><div class="range"><input type="range" min="10" max="300" step="10" data-key="effect_amount" aria-label="Effect amount"><output></output></div></div>
+      <div class="row fx-only"><div class="label">Speed<span>100 % is a slow, calm pace</span></div><div class="range"><input type="range" min="25" max="300" step="25" data-key="effect_speed" aria-label="Effect speed"><output></output></div></div>
+      <div class="row fx-only fx-wind"><div class="label">Wind<span>Blows snow, rain, petals and leaves to the left or right</span></div><div class="range"><input type="range" min="-100" max="100" step="10" data-key="effect_wind" aria-label="Wind"><output></output></div></div>
+      <div class="row fx-only"><div class="label">Use accent colour<span>Instead of each effect's natural colours</span></div><input type="checkbox" class="switch" data-key="effect_accent" aria-label="Use accent colour"></div>
     </section>
   </div>
 
@@ -278,8 +315,12 @@
     opacity: 'opacity', font_size: 'fontSize', start_essentials: 'startEssentials', start_clock: 'startClock', frame: 'frame', card: 'card', text: 'text', accent: 'accent',
     clock_style: 'clockStyle', clock_format: 'clockFormat', clock_weight: 'clockWeight', clock_size: 'clockSize', clock_seconds: 'clockSeconds', clock_date: 'clockDate',
     bg_dim: 'bgDim', bg_blur: 'bgBlur', bg_fit: 'bgFit', nt_order: 'ntOrder', nt_search: 'ntSearch', nt_width: 'ntWidth', effect: 'effect', effect_amount: 'effectAmount',
-    nt_pos: 'ntPos', glass: 'glass', ui_scale: 'uiScale', page_zoom: 'pageZoom' };
-  const units = { radius: ' px', gap: ' px', sidebar_width: ' px', font_size: ' px', opacity: ' %', clock_size: ' px', bg_dim: ' %', bg_blur: ' px', nt_width: ' px', effect_amount: '', ui_scale: ' %', page_zoom: ' %' };
+    nt_pos: 'ntPos', glass: 'glass', ui_scale: 'uiScale', page_zoom: 'pageZoom', bg_window: 'bgWindow', frame_blur: 'frameBlur', frame_tint: 'frameTint',
+    bg_speed: 'bgSpeed', bg_sound: 'bgSound', bg_volume: 'bgVolume', bg_pause: 'bgPause', nt_arrange_btn: 'ntArrangeBtn',
+    bg_focus_x: 'bgFocusX', bg_focus_y: 'bgFocusY', bg_zoom: 'bgZoom', clock_font: 'clockFont', clock_color: 'clockColor', clock_date_fmt: 'clockDateFmt',
+    clock_greet: 'clockGreet', analog_face: 'analogFace', effect_speed: 'effectSpeed', effect_wind: 'effectWind', effect_accent: 'effectAccent' };
+  const units = { radius: ' px', gap: ' px', sidebar_width: ' px', font_size: ' px', opacity: ' %', clock_size: ' px', bg_dim: ' %', bg_blur: ' px', nt_width: ' px', effect_amount: '', ui_scale: ' %', page_zoom: ' %',
+    frame_blur: ' px', frame_tint: ' %', bg_speed: ' %', bg_volume: ' %', bg_focus_x: ' %', bg_focus_y: ' %', bg_zoom: ' %', effect_speed: ' %', effect_wind: '' };
 
   // Category navigation; the last page is remembered for this session only.
   function go(page) {
@@ -310,13 +351,30 @@
   }
 
   // Called by Rust after a Wallpaper Engine scan; previews come from the mapped workshop folders.
+  let wallpapers = [], weKind = 'all';
   function renderWallpapers(list, libraries) {
     $('wescan').textContent = 'Search again';
+    wallpapers = list;
+    $('wetools').hidden = !list.length;
     if (!libraries) { $('we').innerHTML = '<div class="empty">Wallpaper Engine isn\'t installed through Steam on this PC.</div>'; return; }
     if (!list.length) { $('we').innerHTML = '<div class="empty">No wallpapers yet. Subscribe to some in the Wallpaper Engine Workshop, then search again.</div>'; return; }
-    $('we').replaceChildren(...list.map(w => {
+    filterWallpapers();
+  }
+  $('wefind').oninput = () => filterWallpapers();
+  $('wekind').querySelectorAll('button').forEach(b => b.onclick = () => {
+    weKind = b.dataset.v;
+    $('wekind').querySelectorAll('button').forEach(x => x.setAttribute('aria-pressed', x === b));
+    filterWallpapers();
+  });
+  function filterWallpapers() {
+    const q = $('wefind').value.trim().toLowerCase();
+    const shown = wallpapers.filter(w => (weKind === 'all' || w.kind === weKind) && (!q || w.title.toLowerCase().includes(q)));
+    $('wecount').textContent = shown.length + ' of ' + wallpapers.length;
+    if (!shown.length) { $('we').innerHTML = '<div class="empty">Nothing matches.</div>'; return; }
+    $('we').replaceChildren(...shown.map(w => {
       const b = document.createElement('button');
-      b.className = 'wp'; b.title = w.title;
+      b.className = 'wp'; b.title = w.title; b.dataset.we = w.lib + ':' + w.id;
+      b.setAttribute('aria-pressed', VELOCITY.bgWe === b.dataset.we);
       const box = document.createElement('div');
       if (w.preview) {
         const img = document.createElement('img');
@@ -325,7 +383,7 @@
         box.append(img);
       }
       const t = document.createElement('span'); t.textContent = w.title;
-      const k = document.createElement('small'); k.textContent = w.kind === 'video' ? 'Video' : 'Preview image';
+      const k = document.createElement('small'); k.textContent = w.kind === 'video' ? 'Video · live' : w.kind === 'web' && w.entry ? 'Web · live page' : (w.kind ? w.kind[0].toUpperCase() + w.kind.slice(1) : 'Wallpaper') + ' · preview image';
       b.append(box, t, k);
       b.onclick = () => send('bg:we:' + w.lib + ':' + w.id);
       return b;
@@ -372,9 +430,24 @@
   document.querySelectorAll('input[type=range]').forEach(r => r.oninput = () => { r.nextElementSibling.value = r.value + units[r.dataset.key]; set(r.dataset.key, r.value); });
   document.querySelectorAll('input[type=color]').forEach(c => c.oninput = () => { c.previousElementSibling.textContent = c.value; set(c.dataset.key, c.value); });
 
+  // Called by Rust while a background file is being copied (failed = the copy didn't work).
+  function bgBusy(on, failed) {
+    $('webusy').hidden = !on && !failed;
+    $('webusy').textContent = failed ? 'That file couldn\'t be used. Try another one.' : 'Copying the wallpaper… large videos can take a few seconds.';
+  }
+
   let bgShown = null;
   // Called at load and by Rust after every change.
   function applySettings(s) {
+    VELOCITY = s;
+    document.querySelectorAll('.wp').forEach(b => b.setAttribute('aria-pressed', b.dataset.we === s.bgWe));
+    const video = /\.(mp4|webm)$/.test(s.bg);
+    document.querySelectorAll('.video-only').forEach(el => el.hidden = !video);
+    document.querySelectorAll('.sound-only').forEach(el => el.hidden = !video || !s.bgSound);
+    document.querySelectorAll('.glasswin-only').forEach(el => el.hidden = !s.bg || !s.bgWindow);
+    document.querySelectorAll('.fill-only').forEach(el => el.hidden = !s.bg || s.bg === 'bg.web' || s.bgFit === 'contain');
+    document.querySelectorAll('.fx-wind').forEach(el => el.hidden = !['snow', 'rain', 'sakura', 'leaves', 'bubbles', 'fireflies'].includes(s.effect));
+    document.querySelectorAll('.fx-count').forEach(el => el.hidden = s.effect === 'none' || s.effect === 'aurora');
     window.velocityTheme(s);
     document.querySelectorAll('.seg').forEach(seg => seg.querySelectorAll('button').forEach(b => b.setAttribute('aria-pressed', String(s[keyOf[seg.dataset.key]]) === b.dataset.v)));
     document.querySelectorAll('.theme').forEach(b => b.setAttribute('aria-pressed', b.dataset.v === s.preset));
@@ -385,14 +458,18 @@
     document.querySelectorAll('input[type=color]').forEach(c => { if (document.activeElement !== c) c.value = s[keyOf[c.dataset.key]]; c.previousElementSibling.textContent = c.value; });
     document.querySelectorAll('.side-only').forEach(el => el.hidden = s.tabsTop);
     document.querySelectorAll('.clock-only').forEach(el => el.hidden = !s.startClock);
-    document.querySelectorAll('.digital-only').forEach(el => el.hidden = !s.startClock || s.clockStyle !== 'digital');
+    // Only the options the chosen clock style actually uses (data-clock lists the styles a row applies to).
+    document.querySelectorAll('[data-clock]').forEach(el => el.hidden = !s.startClock || !el.dataset.clock.split(' ').includes(s.clockStyle));
+    document.querySelectorAll('.date-only').forEach(el => el.hidden = !s.startClock || !s.clockDate);
     document.querySelectorAll('.bg-only').forEach(el => el.hidden = !s.bg);
     document.querySelectorAll('.fx-only').forEach(el => el.hidden = s.effect === 'none');
     $('bgclear').hidden = !s.bg;
-    const src = s.bg ? `https://bg.velocity.example/${s.bg}?v=${s.bgVer}` : '';
-    if (src !== bgShown) {
+    // A web wallpaper is previewed by its thumbnail; the live page only runs on the new tab.
+    const file = s.bg === 'bg.web' ? s.bgThumb : s.bg;
+    const src = file ? `https://bg.velocity.example/${file}?v=${s.bgVer}` : '';
+    if (src !== bgShown || !s.bg) {
       bgShown = src;
-      const el = !src ? document.createTextNode('No background') : /\.(mp4|webm)$/.test(s.bg)
+      const el = !src ? document.createTextNode(s.bg ? 'Live web wallpaper' : 'No background') : /\.(mp4|webm)$/.test(file)
         ? Object.assign(document.createElement('video'), { src, autoplay: true, loop: true, muted: true })
         : Object.assign(document.createElement('img'), { src, alt: '' });
       $('bgprev').replaceChildren(el);
