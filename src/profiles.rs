@@ -61,7 +61,61 @@ pub fn delete(base: &Path, name: &str) -> bool {
         return false;
     }
     let _ = fs::remove_dir_all(&trash);
+    remove_avatar(base, &name);
     true
+}
+
+/// Profile pictures live together in `avatars/<profile>.<ext>`, the only folder the built-in pages can read
+/// them from (`https://avatars.velocity.example/`), so no page can reach a profile's own data.
+pub const AVATAR_HOST: &str = "avatars.velocity.example";
+const AVATAR_EXTS: &[&str] = &["png", "jpg", "jpeg", "webp", "gif", "bmp"];
+const AVATAR_MAX: u64 = 10 * 1024 * 1024;
+
+pub fn avatars_dir(base: &Path) -> PathBuf {
+    base.join("avatars")
+}
+
+fn avatar_file(base: &Path, name: &str) -> Option<PathBuf> {
+    fs::read_dir(avatars_dir(base)).ok()?.flatten().map(|e| e.path()).find(|p| {
+        let stem = p.file_stem().and_then(|s| s.to_str()).unwrap_or("");
+        let ext = p.extension().and_then(|s| s.to_str()).unwrap_or("").to_lowercase();
+        stem.eq_ignore_ascii_case(name) && AVATAR_EXTS.contains(&ext.as_str())
+    })
+}
+
+/// When the profile was last used (unix seconds, 0 = never): its history file is rewritten on every start
+/// and every visit.
+pub fn last_used(base: &Path, name: &str) -> u64 {
+    fs::metadata(dir(base, name).join("history.tsv")).and_then(|m| m.modified()).ok()
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map_or(0, |d| d.as_secs())
+}
+
+/// "<file name>?v=<modified time>" of the profile's picture, or empty when it has none.
+pub fn avatar(base: &Path, name: &str) -> String {
+    let Some(path) = avatar_file(base, name) else { return String::new() };
+    let ver = fs::metadata(&path).and_then(|m| m.modified()).ok()
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map_or(0, |d| d.as_secs());
+    format!("{}?v={ver}", path.file_name().and_then(|f| f.to_str()).unwrap_or(""))
+}
+
+/// Copy an image as the profile's picture, replacing the old one.
+pub fn set_avatar(base: &Path, name: &str, src: &Path) -> bool {
+    let ext = src.extension().and_then(|e| e.to_str()).unwrap_or("").to_lowercase();
+    let size_ok = fs::metadata(src).is_ok_and(|m| m.is_file() && m.len() <= AVATAR_MAX);
+    if !AVATAR_EXTS.contains(&ext.as_str()) || !size_ok || valid_name(name).is_none() {
+        return false;
+    }
+    remove_avatar(base, name);
+    let _ = fs::create_dir_all(avatars_dir(base));
+    fs::copy(src, avatars_dir(base).join(format!("{name}.{ext}"))).is_ok()
+}
+
+pub fn remove_avatar(base: &Path, name: &str) {
+    while let Some(p) = avatar_file(base, name) {
+        if fs::remove_file(p).is_err() {
+            break;
+        }
+    }
 }
 
 /// Open a profile in a new window.
@@ -71,18 +125,18 @@ pub fn launch(name: &str) {
     }
 }
 
-/// The profile named on the command line (`--profile <name>`), created if needed; Default otherwise.
-pub fn from_args(base: &Path) -> String {
+/// The profile named on the command line (`--profile <name>`), created if needed; None without the flag.
+pub fn from_args(base: &Path) -> Option<String> {
     let args: Vec<String> = std::env::args().collect();
-    let asked = args.iter().position(|a| a == "--profile").and_then(|i| args.get(i + 1)).and_then(|n| valid_name(n));
-    match asked {
+    let i = args.iter().position(|a| a == "--profile")?;
+    Some(match args.get(i + 1).and_then(|n| valid_name(n)) {
         Some(n) if !n.eq_ignore_ascii_case(DEFAULT) => list(base)
             .into_iter()
             .find(|x| x.eq_ignore_ascii_case(&n))
             .or_else(|| create(base, &n))
             .unwrap_or_else(|| DEFAULT.to_string()),
         _ => DEFAULT.to_string(),
-    }
+    })
 }
 
 #[cfg(test)]
@@ -105,7 +159,18 @@ mod tests {
         assert_eq!(list(&base), ["Default", "Alpha", "Work"]);
         assert_eq!(dir(&base, "Default"), base);
         fs::write(dir(&base, "Work").join("settings.ini"), "x").unwrap();
+        let pic = base.join("me.PNG");
+        fs::write(&pic, "png").unwrap();
+        assert!(avatar(&base, "Work").is_empty());
+        assert!(set_avatar(&base, "Work", &pic));
+        assert!(avatar(&base, "work").starts_with("Work.png?v="), "found case-insensitively");
+        let jpg = base.join("me.jpg");
+        fs::write(&jpg, "jpg").unwrap();
+        assert!(set_avatar(&base, "Work", &jpg));
+        assert!(avatar(&base, "Work").starts_with("Work.jpg?v="), "the old picture is replaced");
+        assert!(!set_avatar(&base, "Work", &base.join("settings.ini")), "only images");
         assert!(delete(&base, "Work"));
+        assert!(avatar(&base, "Work").is_empty(), "deleting a profile removes its picture");
         assert!(!delete(&base, "Default"));
         assert_eq!(list(&base), ["Default", "Alpha"]);
         let _ = fs::remove_dir_all(&base);

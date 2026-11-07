@@ -20,6 +20,27 @@
   .ib { width: 28px; height: 28px; display: grid; place-items: center; color: var(--muted); border-radius: 6px; }
   .ib:hover { background: var(--hover); color: var(--text); }
   .ib.close:hover { background: #c42b1c; color: #fff; }
+
+  /* Sidebar layout: the window controls live in a strip above the page that opens when the cursor reaches the
+     top edge (Rust moves the page down by TOP_STRIP = 36px and lays this webview under the whole window). */
+  #topstrip { display: none; position: fixed; z-index: 2; top: 0; height: 36px; left: var(--sw); right: 0; align-items: center; justify-content: flex-end; gap: 2px; padding: 0 6px; }
+  [data-side=right] #topstrip { left: 0; right: var(--sw); }
+  [data-toppeek=true] #topstrip { display: flex; }
+  [data-toppeek=true][data-layout=side] body { position: fixed; top: 0; bottom: 0; left: 0; width: var(--sw); }
+  [data-toppeek=true][data-layout=side][data-side=right] body { left: auto; right: 0; }
+
+  /* Downloads button: a progress ring while something downloads, a dot when one finished unseen. */
+  #dl { position: relative; }
+  #dl::before { content: ""; position: absolute; inset: 2px; border-radius: 50%; display: none;
+    background: conic-gradient(var(--accent) calc(var(--p, 0) * 1%), var(--hair) 0);
+    -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 2px), #000 calc(100% - 1.5px)); }
+  #dl[data-busy=true]::before { display: block; }
+  #dl[data-busy=true][data-known=false]::before { background: conic-gradient(var(--accent) 25%, var(--hair) 0); animation: spin 1s linear infinite; }
+  #dl[data-busy=true] { color: var(--text); }
+  #dl i { position: absolute; top: 4px; right: 4px; width: 6px; height: 6px; border-radius: 50%; background: var(--accent); display: none; }
+  #dl[data-unseen=true] i { display: block; }
+  @keyframes spin { to { transform: rotate(1turn); } }
+  @media (prefers-reduced-motion: reduce) { #dl::before { animation: none !important; } }
   .row { display: flex; align-items: center; }
   #drag { min-width: 40px; align-self: stretch; }
 
@@ -47,11 +68,12 @@
 
   /* History suggestions under the address bar. With tabs on top Rust makes this webview taller while it shows. */
   #urlform { position: relative; }
-  #sugg { position: absolute; z-index: 5; left: 0; right: 0; top: calc(100% + 4px); margin: 0; padding: 4px; list-style: none; border-radius: 10px;
-    background: var(--frame); box-shadow: 0 8px 24px rgb(0 0 0 / .35), inset 0 0 0 1px var(--hair); }
+  #sugg { position: absolute; z-index: 5; left: 0; right: 0; top: calc(100% + 4px); margin: 0; padding: 4px; list-style: none; border-radius: 8px;
+    background: var(--frame); box-shadow: inset 0 0 0 1px var(--hair); }
   [data-layout=top] #sugg { right: auto; width: max(100%, 360px); }
-  #sugg li { display: flex; flex-direction: column; padding: 6px 8px; border-radius: 6px; min-width: 0; }
-  #sugg li:hover, #sugg li[aria-selected=true] { background: var(--active); }
+  #sugg li { display: flex; flex-direction: column; justify-content: center; min-height: 40px; padding: 4px 10px; border-radius: 6px; min-width: 0; }
+  #sugg li:hover { background: var(--hover); }
+  #sugg li[aria-selected=true] { background: var(--active); }
   #sugg b, #sugg span { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
   #sugg b { font-weight: 500; }
   #sugg span { color: var(--muted); font-size: .92em; }
@@ -87,10 +109,11 @@
   .tab .x:hover { color: var(--text); background: var(--hover); }
 
   #foot { display: flex; align-items: center; gap: 2px; }
-  #foot .brand { flex: 1; display: flex; align-items: center; gap: 8px; font-weight: 600; }
-  #foot .brand svg { width: 18px; height: 18px; stroke: none; }
-  #prof { max-width: 110px; padding: 2px 8px; border-radius: 6px; background: var(--field); color: var(--muted); font-weight: 500; font-size: .9em; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
-  #prof:empty { display: none; }
+  #foot .spacer { flex: 1; align-self: stretch; }
+  /* Profile button: the profile's picture (or first letter) in a circle, like the other toolbar icons. */
+  #prof i { width: 20px; height: 20px; border-radius: 50%; display: grid; place-items: center; overflow: hidden; background: var(--hair); color: var(--text); font: 600 10px/1 var(--font); font-style: normal; }
+  #prof i img { width: 100%; height: 100%; object-fit: cover; }
+  #prof:hover i { box-shadow: 0 0 0 1.5px var(--hair); }
   #grip { position: fixed; z-index: 1; }
 
   /* Sidebar layout */
@@ -103,7 +126,7 @@
   [data-layout=side] .tile.active { background: var(--active); }
   [data-layout=side] #new { height: 34px; padding-left: 12px; margin-top: 14px; }
   [data-layout=side] #tabs { overflow-y: auto; display: flex; flex-direction: column; gap: 2px; margin-top: 2px; }
-  [data-layout=side] #foot { margin-top: 8px; padding-left: 6px; }
+  [data-layout=side] #foot { margin-top: 8px; }
   [data-layout=side][data-side=right] body { grid-template-areas: "win drag nav" "url url url" "ess ess ess" "new new new" "tabs tabs tabs" "foot foot foot"; }
   [data-layout=side] #grip { top: 0; bottom: 0; left: 0; width: 5px; cursor: ew-resize; }
   [data-layout=side][data-side=right] #grip { left: auto; right: 0; }
@@ -117,6 +140,8 @@
   [data-layout=top] #br { order: 5; flex-basis: 100%; height: 0; }
   [data-layout=top] #nav { order: 6; } [data-layout=top] #urlform { order: 7; } [data-layout=top] #essentials { order: 8; } [data-layout=top] #foot { order: 9; }
   [data-layout=top] #urlform { flex: 1; min-width: 160px; height: 30px; align-self: center; }
+  /* Without "wide address bar" the field is a centred column with equal room on both sides. */
+  [data-layout=top]:not([data-wide=true]) #urlform { max-width: 680px; margin-inline: auto; }
   [data-layout=top] #drag { flex: 1; }
   [data-layout=side] #br { display: none; }
   [data-layout=top] #tabs { display: flex; gap: 2px; align-items: end; overflow-x: auto; padding-top: 6px; min-width: 0; max-width: calc(100% - 180px); }
@@ -131,7 +156,7 @@
   [data-layout=top] #essentials { display: flex; gap: 2px; align-items: center; }
   [data-layout=top] #foot { align-items: center; }
   [data-layout=top] .tile { width: 30px; height: 30px; }
-  [data-layout=top] #foot .brand { display: none; }
+  [data-layout=top] #foot .spacer { display: none; }
   [data-layout=top] #grip { left: 0; right: 0; top: 0; height: 4px; cursor: ns-resize; }
 
   #nav { grid-area: nav; } #drag { grid-area: drag; } #win { grid-area: win; } #urlform { grid-area: url; }
@@ -140,6 +165,11 @@
 </head>
 <body>
   <div id="wall" aria-hidden="true"></div>
+  <div id="topstrip">
+    <button class="ib" title="Minimize" aria-label="Minimize" onclick="send('win:min')"><svg viewBox="0 0 24 24"><path d="M6 12h12"/></svg></button>
+    <button class="ib" title="Maximize" aria-label="Maximize" onclick="send('win:max')"><svg viewBox="0 0 24 24"><rect x="6.5" y="6.5" width="11" height="11" rx="1.5"/></svg></button>
+    <button class="ib close" title="Close" aria-label="Close" onclick="send('win:close')"><svg viewBox="0 0 24 24"><path d="M7 7l10 10M17 7L7 17"/></svg></button>
+  </div>
   <div id="grip" onmousedown="send('resize')"></div>
   <div id="nav" class="row">
     <button class="ib" title="Back (Alt+Left)" aria-label="Back" onclick="send('back')"><svg viewBox="0 0 24 24"><path d="M15 18l-6-6 6-6"/></svg></button>
@@ -162,8 +192,10 @@
   <ul id="tabs" role="tablist" aria-label="Tabs"></ul>
   <span id="br" aria-hidden="true"></span>
   <div id="foot">
-    <span class="brand"><svg viewBox="0 0 64 64" aria-hidden="true"><rect x="10" y="29" width="26" height="6" rx="3" fill="currentColor" fill-opacity=".35"/><rect x="18" y="20" width="14" height="4" rx="2" fill="currentColor" fill-opacity=".2"/><circle cx="42" cy="32" r="10" fill="currentColor"/></svg>Velocity<span id="prof"></span></span>
+    <button class="ib" id="dl" title="Downloads (Ctrl+J)" aria-label="Downloads" onclick="send('downloads')"><svg viewBox="0 0 24 24"><path d="M12 4v11M7.5 10.5L12 15l4.5-4.5M5 19h14"/></svg><i></i></button>
+    <span class="spacer"></span>
     <button class="ib" title="Compact mode (Ctrl+Alt+C)" aria-label="Compact mode" onclick="send('key:compact')"><svg viewBox="0 0 24 24"><rect x="4" y="5" width="16" height="14" rx="2"/><path d="M9.5 5v14"/></svg></button>
+    <button class="ib" id="prof" onclick="send('profiles')"><i></i></button>
     <button class="ib" title="Settings (Ctrl+,)" aria-label="Settings" onclick="send('key:settings')"><svg viewBox="0 0 24 24"><path d="M4 7h10M18 7h2M4 17h4M12 17h8"/><circle cx="16" cy="7" r="2"/><circle cx="10" cy="17" r="2"/></svg></button>
   </div>
 <script>
@@ -180,6 +212,23 @@
     const img = document.createElement('img'); img.alt = ''; img.src = favicon(u); img.onerror = () => img.style.visibility = 'hidden'; return img;
   };
   function focusUrl() { url.focus(); url.select(); }
+
+  // Called by Rust: the strip above the page opened or closed. Leaving this webview closes it again.
+  function topPeek(on) { document.documentElement.dataset.toppeek = on; }
+  document.documentElement.addEventListener('mouseleave', () => { if (document.documentElement.dataset.toppeek === 'true') send('toppeek:0'); });
+
+  // Called by Rust: running downloads, their overall % (-1 = size unknown), and whether one finished unseen.
+  function downloadsBadge(running, pct, unseen) {
+    const b = $('dl');
+    b.dataset.busy = running > 0;
+    b.dataset.known = pct >= 0;
+    b.style.setProperty('--p', Math.max(pct, 0));
+    b.dataset.unseen = unseen && !running;
+    b.title = running ? `Downloading ${running === 1 ? '1 file' : running + ' files'}${pct >= 0 ? ' · ' + pct + ' %' : ''} (Ctrl+J)` : 'Downloads (Ctrl+J)';
+  }
+  // "https://www.github.com/x" shows as "github.com/x" unless "Always show full URLs" is on; editing shows it all.
+  let curUrl = '';
+  const shown = u => !u || (S && S.fullUrls) ? u : u.replace(/^https:\/\//, '').replace(/^www\./, '').replace(/^([^/?#]+)\/$/, '$1');
 
   // Window glass: show the new tab wallpaper behind the tab UI, aligned with the window.
   let wallSrc = '', frame = null, S = null;
@@ -235,8 +284,21 @@
     wall(s);
     root.layout = s.tabsTop ? 'top' : 'side';
     root.side = s.sidebarRight ? 'right' : 'left';
-    $('prof').textContent = profile === 'Default' ? '' : profile;
-    $('prof').title = 'Profile: ' + profile;
+    root.wide = s.wideUrl;
+    root.compact = s.compact;
+    // Profile button: redrawn only when the profile's picture changes.
+    const btn = $('prof'), key = profile.n + '|' + profile.a;
+    if (btn.dataset.key !== key) {
+      btn.dataset.key = key;
+      btn.title = btn.ariaLabel = 'Profile: ' + profile.n;
+      const pic = btn.firstChild;
+      if (profile.a) {
+        const img = document.createElement('img');
+        img.alt = '';
+        img.src = 'https://avatars.velocity.example/' + profile.a.split('?').map((x, i) => i ? x : encodeURIComponent(x)).join('?');
+        pic.replaceChildren(img);
+      } else pic.textContent = profile.n[0].toUpperCase();
+    }
     const cur = tabs.find(t => t.id === active);
     // Rebuild the Essentials only when the list itself changed; otherwise just move the highlight.
     const essKey = essentials.join('\n');
@@ -271,7 +333,8 @@
       lastActive = active;
       list.querySelector('.tab.active')?.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'smooth' });
     }
-    if (cur && document.activeElement !== url) url.value = cur.url;
+    curUrl = cur ? cur.url : '';
+    if (document.activeElement !== url) url.value = shown(curUrl);
   }
   let lastActive = null;
 
@@ -317,9 +380,13 @@
   document.body.addEventListener('mouseleave', () => { if (document.activeElement !== url) send('unpeek'); });
   url.addEventListener('blur', () => { if (!document.body.matches(':hover')) send('unpeek'); });
 
-  $('drag').addEventListener('mousedown', e => { if (e.button === 0 && e.detail === 1) send('drag'); });
-  $('drag').addEventListener('dblclick', () => send('win:max'));
-  url.addEventListener('focus', () => url.select());
+  // Any empty spot of the tab bar moves the window (in the sidebar that is most of it, not just the strip
+  // next to the window buttons); double-clicking one maximises.
+  const blank = t => t === document.body || t === document.documentElement || ['drag', 'tabs', 'foot', 'nav', 'win', 'essentials', 'br', 'topstrip'].includes(t.id) || t.classList.contains('spacer');
+  addEventListener('mousedown', e => { if (e.button === 0 && e.detail === 1 && blank(e.target)) send('drag'); });
+  addEventListener('dblclick', e => { if (blank(e.target)) send('win:max'); });
+  url.addEventListener('focus', () => { if (url.value === shown(curUrl)) url.value = curUrl; url.select(); });
+  url.addEventListener('blur', () => { if (url.value === curUrl) url.value = shown(curUrl); });
   addEventListener('contextmenu', e => e.preventDefault());
   addEventListener('keydown', e => {
     const k = !e.ctrlKey ? null : e.altKey ? ({c: 'compact'})[e.key]
@@ -327,6 +394,7 @@
     if (k) { e.preventDefault(); send('key:' + k); return; }
     if (e.key === 'F5') { e.preventDefault(); send('reload'); }
     if (e.key === 'F12') { e.preventDefault(); send('devtools'); }
+    if (e.ctrlKey && !e.altKey && e.key === 'j') { e.preventDefault(); send('downloads'); }
     if (e.altKey && e.key === 'ArrowLeft') send('back');
     if (e.altKey && e.key === 'ArrowRight') send('forward');
     if (e.key === 'Escape') url.blur();

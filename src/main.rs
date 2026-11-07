@@ -1,9 +1,11 @@
 // No console window in release builds.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod downloads;
 mod history;
 mod icon;
 mod media;
+mod picker;
 mod profiles;
 mod settings;
 
@@ -44,7 +46,7 @@ const PEEK_STRIP: f64 = 6.0;
 const PAGE_KEYS_JS: &str = r#"
 addEventListener('keydown', e => {
   const k = !e.ctrlKey ? null : e.altKey ? ({c: 'compact'})[e.key]
-    : ({t: 'new', w: 'close', l: 'focus', ',': 'settings', Tab: e.shiftKey ? 'prev' : 'next'})[e.key];
+    : ({t: 'new', w: 'close', l: 'focus', j: 'downloads', ',': 'settings', Tab: e.shiftKey ? 'prev' : 'next'})[e.key];
   if (k) { e.preventDefault(); e.stopPropagation(); window.ipc.postMessage('key:' + k); }
 }, true);
 "#;
@@ -56,6 +58,7 @@ enum UserEvent {
     PageNav(u32, String),
     PagePos(String),
     PageSuggest(u32, String),
+    Download(downloads::Update),
     BgInstalled(Option<media::Installed>, String),
     NewTab(String),
     UrlChanged(u32, String),
@@ -78,6 +81,9 @@ struct Browser {
     dir: PathBuf,  // this profile's folder
     profile: String,
     history: history::History,
+    downloads: downloads::Downloads,
+    downloads_unseen: bool, // a download finished since the list was last opened
+    close_after: Vec<(u32, u32, String)>, // (download, tab, url): tabs opened only for a download
     proxy: EventLoopProxy<UserEvent>,
     tabs: Vec<Tab>,
     active: usize,
@@ -87,9 +93,12 @@ struct Browser {
     settings_view: Option<WebView>,
     settings_tab: Option<u32>, // id of the tab the settings panel was opened on
     peeking: bool,
+    minimized: bool,
+    top_peek: bool, // sidebar layout: the window-controls strip above the page is shown
     we_dirs: Vec<PathBuf>,
     wallpapers: Vec<media::Wallpaper>,
     arrange_next: bool, // the next new tab opens in arrange mode
+    settings_page: &'static str, // the page the settings panel opens on next, or "" for the last one
 }
 
 impl Browser {
@@ -104,13 +113,14 @@ impl Browser {
             .map(|(k, name, f, c, t, a)| format!("['{k}','{name}','{f}','{c}','{t}','{a}']"))
             .collect();
         format!(
-            "if(!/^https?:$/.test(location.protocol)){{{THEME_JS}{SUGGEST_JS}window.VELOCITY={};window.ESSENTIALS=[{}];window.ENGINES=[{}];window.PRESETS=[{}];window.FRAME={};window.ARRANGE={};}}",
+            "if(!/^https?:$/.test(location.protocol)){{{THEME_JS}{SUGGEST_JS}window.VELOCITY={};window.ESSENTIALS=[{}];window.ENGINES=[{}];window.PRESETS=[{}];window.FRAME={};window.ARRANGE={};window.START_PAGE='{}';}}",
             self.settings.to_js(),
             essentials.join(","),
             engines.join(","),
             presets.join(","),
             self.frame_js(),
-            self.arrange_next
+            self.arrange_next,
+            self.settings_page
         )
     }
 
@@ -164,6 +174,10 @@ impl Browser {
             .build_as_child(&self.window)
             .expect("create tab webview");
         round_corners(&view, &self.window, &self.settings, bounds);
+        let p5 = self.proxy.clone();
+        downloads::watch(&view, id, move |u| {
+            let _ = p5.send_event(UserEvent::Download(u));
+        });
         if new_tab {
             media::map(&view, media::BG_HOST, &media::bg_dir(&self.dir));
         } else {
@@ -299,7 +313,7 @@ impl Browser {
             cur.id,
             essentials.join(","),
             self.settings.to_js(),
-            js_str(&self.profile)
+            format!("{{n:{},a:{}}}", js_str(&self.profile), js_str(&profiles::avatar(&self.base, &self.profile)))
         ));
         self.push_frame();
     }
@@ -310,12 +324,12 @@ impl Browser {
 
     fn sidebar_bounds(&self) -> Rect {
         let (w, h) = logical_size(&self.window);
-        rect(layout_rects(w, h, &self.settings).0)
+        rect(layout_rects(w, h, &self.settings, self.top_peek).0)
     }
 
     fn content_bounds(&self) -> Rect {
         let (w, h) = logical_size(&self.window);
-        rect(layout_rects(w, h, &self.settings).1)
+        rect(layout_rects(w, h, &self.settings, self.top_peek).1)
     }
 
     fn layout(&self) {
@@ -336,6 +350,115 @@ impl Browser {
         if self.settings.compact && self.peeking != peek {
             self.peeking = peek;
             self.layout();
+        }
+    }
+
+    /// The Downloads page of the settings panel.
+    fn open_downloads(&mut self) {
+        self.downloads_unseen = false;
+        self.show_settings_page("downloads");
+        self.refresh_downloads();
+    }
+
+    fn download_update(&mut self, u: downloads::Update) {
+        use downloads::Update;
+        match u {
+            Update::Ask { id, tab, url, path, total } => {
+                let suggested = Path::new(&path);
+                let mut dialog = rfd::FileDialog::new().set_title("Save as");
+                if let Some(dir) = suggested.parent() {
+                    dialog = dialog.set_directory(dir);
+                }
+                if let Some(name) = suggested.file_name().and_then(|n| n.to_str()) {
+                    dialog = dialog.set_file_name(name);
+                }
+                let choice = dialog.save_file();
+                if downloads::answer(id, choice.as_deref()) {
+                    let path = choice.map(|p| p.to_string_lossy().into_owned()).unwrap_or(path);
+                    return self.download_update(Update::Started { id, tab, url, path, total });
+                }
+                return self.close_download_tab(tab, &url); // cancelled
+            }
+            // A tab that only existed to start this download (a link opening a new window) has nothing to show.
+            // It closes once the download is done: closing it now would also stop its progress reports.
+            Update::Started { id, tab, ref url, .. } => {
+                if self.index_of(tab).is_some_and(|i| self.tabs[i].url == *url && self.tabs[i].title == "New tab") {
+                    self.close_after.push((id, tab, url.clone()));
+                }
+            }
+            Update::Finished { id, .. } => {
+                if let Some(at) = self.close_after.iter().position(|c| c.0 == id) {
+                    let (_, tab, url) = self.close_after.remove(at);
+                    self.close_download_tab(tab, &url);
+                }
+                self.downloads_unseen = true;
+            }
+            Update::Progress { .. } => {}
+        }
+        if self.downloads.apply(u) {
+            self.refresh_downloads();
+        }
+    }
+
+    fn close_download_tab(&mut self, tab: u32, url: &str) {
+        let still_empty = self.index_of(tab).filter(|&i| self.tabs[i].url == url && self.tabs[i].title == "New tab");
+        if let Some(i) = still_empty.filter(|_| self.tabs.len() > 1) {
+            self.close_tab(i);
+        }
+    }
+
+    /// Progress ring on the downloads button, and the list if the Downloads page is open.
+    fn refresh_downloads(&self) {
+        let (running, pct) = self.downloads.progress();
+        let _ = self.ui.evaluate_script(&format!("downloadsBadge({running},{pct},{})", self.downloads_unseen));
+        let items: Vec<String> = self
+            .downloads
+            .items
+            .iter()
+            .map(|i| {
+                let name = Path::new(&i.path).file_name().and_then(|n| n.to_str()).unwrap_or(&i.path);
+                let state = match i.state {
+                    downloads::State::Running => "running",
+                    downloads::State::Done => "done",
+                    downloads::State::Failed => "failed",
+                };
+                format!(
+                    "{{id:{},n:{},u:{},s:'{state}',r:{},t:{},ts:{}}}",
+                    i.id, js_str(name), js_str(&i.url), i.received, i.total, i.ts
+                )
+            })
+            .collect();
+        self.settings_js(&format!("window.renderDownloads&&renderDownloads([{}])", items.join(",")));
+    }
+
+    /// Commands from the Downloads page; only files from our own list are ever opened.
+    fn download_command(&mut self, cmd: &str, id: &str) {
+        use std::os::windows::process::CommandExt;
+        let Some(item) = id.parse().ok().and_then(|id| self.downloads.get(id)).cloned() else {
+            return self.refresh_downloads();
+        };
+        let done = item.state == downloads::State::Done && Path::new(&item.path).is_file();
+        match cmd {
+            "open" if done => drop(std::process::Command::new("explorer").arg(&item.path).spawn()),
+            "show" if done => drop(std::process::Command::new("explorer").raw_arg(format!("/select,\"{}\"", item.path)).spawn()),
+            "cancel" => downloads::cancel(item.id),
+            "remove" => self.downloads.remove(item.id),
+            "retry" if item.url.starts_with("http") => self.open_tab(&item.url),
+            _ => {}
+        }
+        self.refresh_downloads();
+    }
+
+    /// Show the settings panel on this tab at `page` (opening it if needed).
+    fn show_settings_page(&mut self, page: &'static str) {
+        if self.settings_view.is_some() {
+            self.settings_tab = Some(self.tabs[self.active].id);
+            self.show_settings_if_owner();
+            self.settings_js(&format!("go('{page}')"));
+        } else {
+            self.settings_page = page;
+            self.toggle_settings();
+            self.settings_page = "";
         }
     }
 
@@ -368,6 +491,7 @@ impl Browser {
             .expect("create settings webview");
         round_corners(&view, &self.window, &self.settings, bounds);
         media::map(&view, media::BG_HOST, &media::bg_dir(&self.dir));
+        media::map(&view, profiles::AVATAR_HOST, &profiles::avatars_dir(&self.base));
         let _ = view.focus();
         self.settings_view = Some(view);
     }
@@ -433,7 +557,7 @@ impl Browser {
     /// Where the page card and the tab UI sit in the window, for pages that align the wallpaper to it.
     fn frame_js(&self) -> String {
         let (w, h) = logical_size(&self.window);
-        let (ui, card) = layout_rects(w, h, &self.settings);
+        let (ui, card) = layout_rects(w, h, &self.settings, self.top_peek);
         format!("{{uiX:{},uiY:{},cardX:{},cardY:{},w:{},h:{}}}", ui.0, ui.1, card.0, card.1, w, h)
     }
 
@@ -486,7 +610,15 @@ impl Browser {
                 return self.show_history("");
             }
             "prof:list" => return self.show_profiles(),
+            "dl:list" => return self.refresh_downloads(),
+            "dl:clear" => {
+                self.downloads.clear();
+                return self.refresh_downloads();
+            }
             _ => {}
+        }
+        if let Some((cmd, id)) = msg.strip_prefix("dl:").and_then(|m| m.split_once(':')) {
+            return self.download_command(cmd, id);
         }
         if let Some(q) = msg.strip_prefix("hist:list:") {
             return self.show_history(q);
@@ -510,6 +642,22 @@ impl Browser {
                     None => self.settings_js("profileError('That name is taken or not allowed.')"),
                 },
                 ("open", Some(n)) => profiles::launch(&n),
+                ("pic", Some(n)) => {
+                    let file = rfd::FileDialog::new()
+                        .set_title(format!("Choose a picture for {n}"))
+                        .add_filter("Images", &["png", "jpg", "jpeg", "webp", "gif", "bmp"])
+                        .pick_file();
+                    if let Some(f) = file {
+                        if !profiles::set_avatar(&self.base, &n, &f) {
+                            self.settings_js("profileError('That picture couldn\\'t be used. Pick an image under 10 MB.')");
+                        }
+                    }
+                    self.sync_ui(); // the profile chip in the tab bar
+                }
+                ("nopic", Some(n)) => {
+                    profiles::remove_avatar(&self.base, &n);
+                    self.sync_ui();
+                }
                 ("del", Some(n)) if n != self.profile => {
                     if !profiles::delete(&self.base, &n) {
                         self.settings_js("profileError('Close the window of that profile first, then delete it.')");
@@ -564,8 +712,7 @@ impl Browser {
     }
 
     fn show_profiles(&self) {
-        let names: Vec<String> = profiles::list(&self.base).iter().map(|n| js_str(n)).collect();
-        self.settings_js(&format!("renderProfiles([{}],{})", names.join(","), js_str(&self.profile)));
+        self.settings_js(&format!("renderProfiles({},{})", profiles_js(&self.base), js_str(&self.profile)));
     }
 
     /// Address bar suggestions from history, as a call to the page's `suggestions(query, items)`.
@@ -581,6 +728,7 @@ impl Browser {
 
     /// Re-apply everything that depends on settings, live.
     fn apply_settings(&mut self) {
+        downloads::set_ask(self.settings.ask_download);
         let (r, g, b) = self.settings.frame_rgb();
         self.window.set_background_color(Some((r, g, b, 255)));
         let _ = self.ui.set_background_color((r, g, b, 255));
@@ -615,6 +763,7 @@ impl Browser {
             "next" => self.activate((self.active + 1) % n),
             "prev" => self.activate((self.active + n - 1) % n),
             "settings" => self.toggle_settings(),
+            "downloads" => self.open_downloads(),
             "compact" => {
                 let next = (!self.settings.compact).to_string();
                 self.handle_setting(&format!("set:compact={next}"));
@@ -645,6 +794,9 @@ impl Browser {
             ("essential", _) => Ok(arg.parse().map(|i| self.open_essential(i)).unwrap_or(())),
             ("key", _) => Ok(self.shortcut(arg)),
             ("unpeek", _) => Ok(self.set_peek(false)),
+            ("profiles", _) => Ok(self.show_settings_page("profiles")),
+            ("downloads", _) => Ok(self.open_downloads()),
+            ("toppeek", _) => Ok(self.set_top_peek(arg == "1")),
             ("suggest", _) => self.ui.evaluate_script(&self.suggestions_js(arg)),
             ("sugg", _) => Ok(self.suggest_space(arg.parse().unwrap_or(0.0))),
             ("win", _) => match arg {
@@ -683,14 +835,56 @@ impl Browser {
         }
     }
 
+    /// The strip with the window controls above the page (sidebar layout): the page slides down to make room.
+    fn set_top_peek(&mut self, on: bool) {
+        let on = on && !self.settings.tabs_top && !self.settings.compact;
+        if self.top_peek == on {
+            return;
+        }
+        self.top_peek = on;
+        self.layout();
+        let _ = self.ui.evaluate_script(&format!("topPeek({on})"));
+        // The tab UI spans the window under the page while the strip shows; keep the page in front.
+        bring_to_top(self.current());
+        self.show_settings_if_owner();
+    }
+
+    /// Hiding the page while minimised also pauses it: videos and effects stop, which saves power.
+    fn set_minimized(&mut self, min: bool) {
+        if self.minimized == min {
+            return;
+        }
+        self.minimized = min;
+        let _ = self.tabs[self.active].view.set_visible(!min);
+        if min {
+            if let Some(v) = &self.settings_view {
+                let _ = v.set_visible(false);
+            }
+        } else {
+            self.show_settings_if_owner();
+        }
+    }
+
     /// Compact mode: the cursor reaching the tab UI's edge of the window reveals it.
     fn cursor_moved(&mut self, x_physical: f64, y_physical: f64) {
+        let (x, y) = (x_physical / self.window.scale_factor(), y_physical / self.window.scale_factor());
         let s = &self.settings;
+        // Sidebar layout: the cursor on the frame above the page opens the window-controls strip.
+        if !s.compact && !s.tabs_top {
+            let strip = TOP_STRIP * s.ui_scale as f64 / 100.0;
+            // Open at the frame above the page; close once the cursor is back below the strip (in the gaps
+            // around the page), in case it left without passing over the strip itself.
+            if y <= s.gap.max(PEEK_STRIP as u32) as f64 {
+                return self.set_top_peek(true);
+            }
+            if self.top_peek && y > strip {
+                return self.set_top_peek(false);
+            }
+        }
         if !s.compact || self.peeking {
             return;
         }
         let (w, _) = logical_size(&self.window);
-        let (x, y) = (x_physical / self.window.scale_factor(), y_physical / self.window.scale_factor());
         let edge = s.gap as f64 + PEEK_STRIP;
         let hit = if s.tabs_top { y <= edge } else if s.sidebar_right { x >= w - edge } else { x <= edge };
         if hit {
@@ -706,7 +900,8 @@ type Xywh = (f64, f64, f64, f64);
 
 /// Where the tab UI and the page card go, in logical px, for a `w` x `h` window.
 /// The tab UI's side of the window holds the UI itself, or in compact mode a strip that reveals it.
-fn layout_rects(w: f64, h: f64, s: &Settings) -> (Xywh, Xywh) {
+/// `top_strip`: sidebar layout with the window-controls strip shown above the page.
+fn layout_rects(w: f64, h: f64, s: &Settings, top_strip: bool) -> (Xywh, Xywh) {
     let gap = s.gap as f64;
     let scale = s.ui_scale as f64 / 100.0; // the tab UI is drawn zoomed, so its box grows with it
     let (ui, card) = if s.tabs_top {
@@ -718,12 +913,19 @@ fn layout_rects(w: f64, h: f64, s: &Settings) -> (Xywh, Xywh) {
         let side = if s.compact { gap.max(PEEK_STRIP) } else { sw };
         let (left, right) = if s.sidebar_right { (gap, side) } else { (side, gap) };
         let ui_x = if s.sidebar_right { w - sw } else { 0.0 };
-        ((ui_x, 0.0, sw, h), (left, gap, (w - left - right).max(1.0), (h - 2.0 * gap).max(1.0)))
+        // Outside compact mode the frame above the page is at least PEEK_STRIP tall, so the cursor can reach it.
+        let top = if top_strip && !s.compact { TOP_STRIP * scale } else if s.compact { gap } else { gap.max(PEEK_STRIP) };
+        ((ui_x, 0.0, sw, h), (left, top, (w - left - right).max(1.0), (h - top - gap).max(1.0)))
     };
+    // The strip is drawn by the tab UI, which then spans the window under the page like window glass.
+    let top_strip = top_strip && !s.tabs_top && !s.compact;
     // Window glass: the tab UI's webview spans the whole window under the page, so the wallpaper also shows
     // in the gaps around the page. Not in compact mode, where the tab UI is raised over the page to peek.
-    if window_glass(s) { ((0.0, 0.0, w, h), card) } else { (ui, card) }
+    if window_glass(s) || top_strip { ((0.0, 0.0, w, h), card) } else { (ui, card) }
 }
+
+/// Height of the window-controls strip above the page in the sidebar layout.
+const TOP_STRIP: f64 = 36.0;
 
 fn window_glass(s: &Settings) -> bool {
     s.bg_window && !s.bg.is_empty() && !s.compact
@@ -940,13 +1142,38 @@ const SUGGEST_JS: &str = r#"window.velocitySuggest = (input, box, submit) => {
 };
 "#;
 
+/// Dark window border/shadow. (tao's with_theme(Dark) starts a borderless window minimized.)
+fn dark_frame(window: &Window) {
+    unsafe {
+        let dark: i32 = 1;
+        let hwnd = HWND(window.hwnd() as _);
+        let _ = DwmSetWindowAttribute(hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE, &dark as *const _ as _, 4);
+    }
+}
+
+/// Every profile with its picture and last use, for the pages: `[{n:name,a:"file?v=...",t:unix seconds}]`.
+fn profiles_js(base: &Path) -> String {
+    let items: Vec<String> = profiles::list(base)
+        .iter()
+        .map(|n| format!("{{n:{},a:{},t:{}}}", js_str(n), js_str(&profiles::avatar(base, n)), profiles::last_used(base, n)))
+        .collect();
+    format!("[{}]", items.join(","))
+}
+
 fn main() -> wry::Result<()> {
     let base = data_dir();
     std::fs::create_dir_all(base.join("extensions")).ok();
-    let profile = profiles::from_args(&base);
+    // Started without --profile: with more than one profile, ask who's using Velocity first.
+    let profile = match profiles::from_args(&base) {
+        Some(p) => p,
+        None if profiles::list(&base).len() > 1 => return picker::run(&base),
+        None => profiles::DEFAULT.to_string(),
+    };
     let dir = profiles::dir(&base, &profile);
     let settings = Settings::load(&dir);
     let history = history::History::load(&dir);
+    let downloads = downloads::Downloads::load(&dir);
+    downloads::set_ask(settings.ask_download);
     let (r, g, b) = settings.frame_rgb();
 
     let event_loop = EventLoopBuilder::<UserEvent>::with_user_event().build();
@@ -961,12 +1188,7 @@ fn main() -> wry::Result<()> {
         .with_background_color((r, g, b, 255))
         .build(&event_loop)
         .expect("window");
-    // Dark window border/shadow. (tao's with_theme(Dark) starts this borderless window minimized.)
-    unsafe {
-        let dark: i32 = 1;
-        let hwnd = HWND(window.hwnd() as _);
-        let _ = DwmSetWindowAttribute(hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE, &dark as *const _ as _, 4);
-    }
+    dark_frame(&window);
 
     // One shared profile = one WebView2 process tree; all webviews must then use the same extension settings.
     let mut ctx = WebContext::new(Some(dir.join("profile")));
@@ -983,21 +1205,32 @@ fn main() -> wry::Result<()> {
         })
         .build_as_child(&window)?;
     media::map(&ui, media::BG_HOST, &media::bg_dir(&dir)); // window glass shows the wallpaper in the tab UI too
+    media::map(&ui, profiles::AVATAR_HOST, &profiles::avatars_dir(&base));
 
     let essentials = load_essentials(&dir);
     let mut b = Browser {
-        window, ui, ctx, base, dir, profile, history, proxy, tabs: Vec::new(), active: 0, next_id: 1, essentials, settings,
-        settings_view: None, settings_tab: None, peeking: false, we_dirs: Vec::new(), wallpapers: Vec::new(), arrange_next: false,
+        window, ui, ctx, base, dir, profile, history, downloads, downloads_unseen: false, close_after: Vec::new(), proxy, tabs: Vec::new(), active: 0, next_id: 1, essentials, settings,
+        settings_view: None, settings_tab: None, peeking: false, minimized: false, top_peek: false, we_dirs: Vec::new(), wallpapers: Vec::new(), arrange_next: false, settings_page: "",
     };
     set_opacity(&b.window, b.settings.opacity);
     b.layout();
-    b.open_tab(NEW_TAB);
+    // `velocity.exe <address>` (as the default browser is started) opens it; only web addresses, never files.
+    let start = std::env::args().skip(1).find(|a| a.starts_with("https://") || a.starts_with("http://"));
+    b.open_tab(start.as_deref().unwrap_or(NEW_TAB));
 
     event_loop.run(move |event, _, control_flow| {
         *control_flow = ControlFlow::Wait;
         match event {
             Event::WindowEvent { event: WindowEvent::CloseRequested, .. } => *control_flow = ControlFlow::Exit,
-            Event::WindowEvent { event: WindowEvent::Resized(_), .. } => b.layout(),
+            // Minimising reports a 0x0 size: laying the pages out at that size would squash them to 1 px
+            // (the new tab's effects then respawn in a corner), so they are hidden until the window comes back.
+            Event::WindowEvent { event: WindowEvent::Resized(size), .. } => {
+                let min = size.width == 0 || size.height == 0 || b.window.is_minimized();
+                b.set_minimized(min);
+                if !min {
+                    b.layout();
+                }
+            }
             Event::WindowEvent { event: WindowEvent::CursorMoved { position, .. }, .. } => b.cursor_moved(position.x, position.y),
             Event::UserEvent(UserEvent::Ui(msg)) => {
                 if !b.handle_ui(&msg) {
@@ -1029,6 +1262,7 @@ fn main() -> wry::Result<()> {
                     b.set_url(i, url);
                 }
             }
+            Event::UserEvent(UserEvent::Download(u)) => b.download_update(u),
             Event::UserEvent(UserEvent::PageSuggest(id, q)) => {
                 // Only our new tab page gets history; once the tab shows a site, the site could read the reply.
                 if let Some(t) = b.index_of(id).map(|i| &b.tabs[i]).filter(|t| t.url.is_empty()) {
@@ -1095,26 +1329,35 @@ mod tests {
     #[test]
     fn layouts() {
         let mut s = Settings::default(); // sidebar left 240, gap 8
-        assert_eq!(layout_rects(1000.0, 600.0, &s), ((0.0, 0.0, 240.0, 600.0), (240.0, 8.0, 752.0, 584.0)));
+        assert_eq!(layout_rects(1000.0, 600.0, &s, false), ((0.0, 0.0, 240.0, 600.0), (240.0, 8.0, 752.0, 584.0)));
         s.sidebar_right = true;
-        assert_eq!(layout_rects(1000.0, 600.0, &s).0 .0, 760.0, "sidebar hugs the right edge");
+        assert_eq!(layout_rects(1000.0, 600.0, &s, false).0 .0, 760.0, "sidebar hugs the right edge");
         s.tabs_top = true;
-        assert_eq!(layout_rects(1000.0, 600.0, &s), ((0.0, 0.0, 1000.0, TOP_BAR), (8.0, TOP_BAR, 984.0, 600.0 - TOP_BAR - 8.0)));
+        assert_eq!(layout_rects(1000.0, 600.0, &s, false), ((0.0, 0.0, 1000.0, TOP_BAR), (8.0, TOP_BAR, 984.0, 600.0 - TOP_BAR - 8.0)));
         s.compact = true;
-        assert_eq!(layout_rects(1000.0, 600.0, &s).1 .1, 8.0, "compact leaves only the gap on top");
+        assert_eq!(layout_rects(1000.0, 600.0, &s, false).1 .1, 8.0, "compact leaves only the gap on top");
         s.compact = false;
         s.ui_scale = 150;
-        assert_eq!(layout_rects(1000.0, 600.0, &s).0 .3, TOP_BAR * 1.5, "top bar grows with the interface size");
+        assert_eq!(layout_rects(1000.0, 600.0, &s, false).0 .3, TOP_BAR * 1.5, "top bar grows with the interface size");
         s.tabs_top = false;
         s.sidebar_right = false;
-        assert_eq!(layout_rects(1000.0, 600.0, &s).0 .2, 360.0, "sidebar too");
+        assert_eq!(layout_rects(1000.0, 600.0, &s, false).0 .2, 360.0, "sidebar too");
         s.bg_window = true;
-        assert_eq!(layout_rects(1000.0, 600.0, &s).0 .2, 360.0, "window glass needs a background");
+        assert_eq!(layout_rects(1000.0, 600.0, &s, false).0 .2, 360.0, "window glass needs a background");
         s.bg = "bg.jpg".into();
-        let (ui, card) = layout_rects(1000.0, 600.0, &s);
+        let (ui, card) = layout_rects(1000.0, 600.0, &s, false);
         assert_eq!((ui, card.0), ((0.0, 0.0, 1000.0, 600.0), 360.0), "glass: tab UI under the whole window, page unchanged");
         s.compact = true;
-        assert_eq!(layout_rects(1000.0, 600.0, &s).0 .2, 360.0, "no window glass in compact mode");
+        assert_eq!(layout_rects(1000.0, 600.0, &s, false).0 .2, 360.0, "no window glass in compact mode");
+        let s = Settings::default();
+        let (ui, card) = layout_rects(1000.0, 600.0, &s, true);
+        assert_eq!(ui, (0.0, 0.0, 1000.0, 600.0), "the strip is drawn by the tab UI under the page");
+        assert_eq!((card.1, card.3), (TOP_STRIP, 600.0 - TOP_STRIP - 8.0), "the page slides down by the strip");
+        let mut s = s;
+        s.gap = 0;
+        assert_eq!(layout_rects(1000.0, 600.0, &s, false).1 .1, PEEK_STRIP, "always room above the page to reach the strip");
+        s.tabs_top = true;
+        assert_eq!(layout_rects(1000.0, 600.0, &s, true).0 .3, TOP_BAR, "no strip with tabs on top");
     }
 
     #[test]

@@ -38,7 +38,7 @@ Compact mode hides either layout; the cursor reaching that window edge reveals i
 
 ## Logo
 
-A white dot with two fading trails (35% and 20% white) on a `#141416` tile with 14/64 corners: a point in motion. Monochrome. `assets/logo.svg` and `src/icon.rs` draw the same shapes.
+A white V on a near-black (`#16171a`) circle: one rounded stroke (6.8/64 wide, round caps and join) with a shorter left arm and a longer right arm, for forward motion. Monochrome, like the rest of the chrome. Inside the pages (settings header, profile picker) the circle gets a faint white ring (16%) so it still reads on dark frames. `assets/logo.svg` and `src/icon.rs` draw the same shapes.
 
 ## New tab
 
@@ -50,4 +50,14 @@ Chrome: none; hovers and state changes switch instantly. New tab only: optional 
 
 ## Settings page
 
-Left category navigation (Appearance, New tab, Clock, Effects, Essentials, Tabs and window, Search, Shortcuts) with one category shown at a time; it collapses to a horizontal strip under 720px.
+Left category navigation (Appearance, New tab, Clock, Effects, Essentials, Tabs and window, Search, History, Profiles, Shortcuts) with one category shown at a time; it collapses to a horizontal strip under 720px.
+
+Lists (Essentials, History, Profiles) share one row: 16px left padding, 16px icon or 36px avatar, title with a muted second line, then `.btn` actions and 28px `.ib` icon buttons on the right; rows are split by `--hair` lines. Search fields over a list are 32px, 8px radius, `--field`.
+
+## Suggestions
+
+History suggestions under the address bar and the new tab search: a flat list (hairline ring, no shadow) with title over muted address, hover `--hover`, keyboard selection `--active`. On the new tab with a background it takes the chosen glass style, like the search field above it.
+
+## Profiles
+
+Each profile has a picture (or its first letter on `--hair`) shown as a circle: 72px in the picker, 36px in settings, 16px in the tab bar chip (6px radius, `--field`), which is hidden for Default without a picture. With more than one profile Velocity starts with the picker: logo, "Who's using Velocity?", flat 148px cards on `--field` (hover `--active`) with name and last use, and an outlined Add profile card.

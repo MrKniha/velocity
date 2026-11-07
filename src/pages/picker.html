@@ -1,0 +1,130 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Who's using Velocity?</title>
+<style>
+  /* Colours from the Default profile via window.velocityTheme; Graphite defaults for the first paint. */
+  :root {
+    --frame: #18181b; --card: #202024; --text: #ececee; --muted: #a1a1aa; --accent: #ececee; --on-accent: #111111;
+    --hair: rgb(236 236 238 / .1); --hover: rgb(236 236 238 / .06); --field: rgb(236 236 238 / .07); --active: rgb(236 236 238 / .11);
+    --font: "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+    --display: "Segoe UI Variable Display", "Segoe UI", system-ui, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: var(--frame); color: var(--text); font: 13px/1.4 var(--font); }
+  body { display: grid; place-items: center; padding: 24px 16px; overflow-y: auto; }
+  main { display: flex; flex-direction: column; align-items: center; width: 100%; max-width: 760px; }
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+
+  .logo { width: 40px; height: 40px; }
+  h1 { font: 600 20px/1.2 var(--display); margin: 18px 0 4px; }
+  .sub { margin: 0 0 32px; color: var(--muted); }
+
+  #list { display: grid; grid-template-columns: repeat(auto-fit, 148px); justify-content: center; gap: 12px; width: 100%; }
+  .card { all: unset; box-sizing: border-box; height: 172px; padding: 22px 12px 16px; border-radius: 12px; background: var(--field);
+    display: flex; flex-direction: column; align-items: center; cursor: pointer; text-align: center; }
+  .card:hover { background: var(--active); }
+  .card:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .card b { margin-top: 14px; font-weight: 600; max-width: 100%; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+  .card small { margin-top: 2px; color: var(--muted); }
+  .av { width: 72px; height: 72px; border-radius: 50%; display: grid; place-items: center; overflow: hidden; flex: none;
+    background: var(--hair); color: var(--text); font: 500 28px/1 var(--font); }
+  .av img { width: 100%; height: 100%; object-fit: cover; }
+
+  /* The add card is an outline only, so the real profiles read first. */
+  .add { background: none; box-shadow: inset 0 0 0 1.5px var(--hair); }
+  .add:hover { background: var(--hover); }
+  .add .av { background: none; box-shadow: inset 0 0 0 1.5px var(--hair); color: var(--muted); }
+  .add .av svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; }
+  .add:hover .av { color: var(--text); }
+  form { display: flex; flex-direction: column; gap: 8px; width: 100%; margin-top: auto; }
+  input { height: 32px; padding: 0 10px; border: 0; border-radius: 8px; background: var(--field); color: var(--text); font: inherit; outline: none; text-align: center; }
+  input:focus { background: var(--active); box-shadow: 0 0 0 1.5px color-mix(in srgb, var(--accent) 55%, transparent); }
+  .btn { border: 0; height: 30px; border-radius: 8px; background: var(--accent); color: var(--on-accent); font: inherit; font-weight: 600; cursor: pointer; }
+  #err { min-height: 18px; margin-top: 16px; color: #e5484d; }
+</style>
+</head>
+<body>
+<main>
+  <svg class="logo" viewBox="0 0 64 64" aria-hidden="true"><circle cx="32" cy="32" r="31" fill="#16171a" stroke="#fff" stroke-opacity=".16" stroke-width="1.5"/><path d="M18.7 20.7L28.5 43.7L45.3 19.9" fill="none" stroke="#fff" stroke-width="6.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+  <h1>Who's using Velocity?</h1>
+  <p class="sub">Choose a profile</p>
+  <div id="list" role="list"></div>
+  <div id="err" role="alert"></div>
+</main>
+<script>
+  const send = m => window.ipc.postMessage(m);
+  const $ = id => document.getElementById(id);
+  window.velocityTheme(VELOCITY);
+  document.documentElement.style.zoom = 1; // the picker keeps its own size
+
+  const avatar = p => {
+    const av = document.createElement('span');
+    av.className = 'av';
+    av.ariaHidden = true;
+    const letter = () => { av.textContent = p.n[0].toUpperCase(); };
+    if (p.a) {
+      const img = document.createElement('img');
+      img.alt = '';
+      img.src = 'https://avatars.velocity.example/' + p.a.split('?').map((x, i) => i ? x : encodeURIComponent(x)).join('?');
+      img.onerror = letter;
+      av.append(img);
+    } else letter();
+    return av;
+  };
+
+  // "Today", "Yesterday", "3 days ago", or a date for anything older than a week.
+  const used = t => {
+    if (!t) return 'Not used yet';
+    const day = d => new Date(d.getFullYear(), d.getMonth(), d.getDate());
+    const days = Math.round((day(new Date()) - day(new Date(t * 1000))) / 864e5);
+    if (days <= 0) return 'Used today';
+    if (days === 1) return 'Used yesterday';
+    if (days < 7) return `Used ${days} days ago`;
+    return 'Used ' + new Date(t * 1000).toLocaleDateString(undefined, { day: 'numeric', month: 'short' });
+  };
+
+  const cards = PROFILES.map(p => {
+    const b = document.createElement('button');
+    b.className = 'card'; b.role = 'listitem';
+    const name = document.createElement('b'); name.textContent = p.n;
+    const when = document.createElement('small'); when.textContent = used(p.t);
+    b.append(avatar(p), name, when);
+    b.onclick = () => send('open:' + p.n);
+    return b;
+  });
+
+  const add = document.createElement('button');
+  add.className = 'card add'; add.role = 'listitem';
+  add.innerHTML = '<span class="av" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg></span><b>Add profile</b>';
+  add.onclick = () => {
+    const box = document.createElement('div');
+    box.className = 'card add'; box.role = 'listitem';
+    box.style.cursor = 'default';
+    box.innerHTML = '<b style="margin-top:4px">New profile</b><form><input maxlength="32" placeholder="Name" aria-label="Profile name" spellcheck="false" autocomplete="off"><button class="btn">Create</button></form>';
+    const input = box.querySelector('input');
+    box.querySelector('form').onsubmit = e => {
+      e.preventDefault();
+      const v = input.value.trim();
+      if (!v) return;
+      if (!/^[\p{L}\p{N} _-]{1,32}$/u.test(v)) return addError('Use letters, numbers, spaces, - and _ only.');
+      send('new:' + v);
+    };
+    input.oninput = () => $('err').textContent = '';
+    input.onkeydown = e => { if (e.key === 'Escape') { box.replaceWith(add); $('err').textContent = ''; add.focus(); } };
+    add.replaceWith(box);
+    input.focus();
+  };
+  function addError(msg) { $('err').textContent = msg; }
+
+  $('list').append(...cards, add);
+  // Arrow keys move between the cards.
+  $('list').addEventListener('keydown', e => {
+    const items = [...$('list').children], i = items.indexOf(document.activeElement);
+    if (i < 0 || !['ArrowLeft', 'ArrowRight'].includes(e.key)) return;
+    items[(i + (e.key === 'ArrowRight' ? 1 : items.length - 1)) % items.length].focus();
+  });
+</script>
+</body>
+</html>
