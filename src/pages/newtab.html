@@ -1,0 +1,92 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>New tab</title>
+<style>
+  /* Neutral greys only. --card must match Settings::card_rgba in settings.rs (shown before this page paints). */
+  :root {
+    --card: #202024; --text: #ececee; --muted: #a1a1aa;
+    --field: rgb(255 255 255 / .06); --field-focus: rgb(255 255 255 / .1); --hair: rgb(255 255 255 / .1); --hover: rgb(255 255 255 / .06);
+    --font: "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+    --display: "Segoe UI Variable Display", "Segoe UI", system-ui, sans-serif;
+  }
+  [data-theme=light] {
+    --card: #fafafb; --text: #18181b; --muted: #52525b;
+    --field: rgb(0 0 0 / .045); --field-focus: #fff; --hair: rgb(0 0 0 / .1); --hover: rgb(0 0 0 / .05);
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; overflow: hidden; }
+  body { display: grid; place-items: center; background: var(--card); color: var(--text); font: 15px var(--font); }
+  ::selection { background: var(--hair); }
+  main { width: min(560px, 86vw); display: flex; flex-direction: column; align-items: center; translate: 0 -6vh; }
+  #time { text-align: center; margin-bottom: 28px; }
+  #clock { font: 300 56px/1 var(--display); letter-spacing: -.02em; font-variant-numeric: tabular-nums; }
+  #date { margin-top: 8px; color: var(--muted); }
+  form { width: 100%; display: flex; align-items: center; gap: 12px; height: 48px; padding: 0 18px; border-radius: 12px; background: var(--field); }
+  form:focus-within { background: var(--field-focus); box-shadow: inset 0 0 0 1px var(--hair); }
+  form svg { width: 17px; height: 17px; flex: none; fill: none; stroke: var(--muted); stroke-width: 1.8; stroke-linecap: round; }
+  input { flex: 1; min-width: 0; height: 100%; border: 0; outline: none; background: none; color: var(--text); font: inherit; }
+  input::placeholder { color: var(--muted); }
+  #essentials { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; margin-top: 24px; }
+  #essentials:empty { display: none; }
+  .tile { all: unset; width: 72px; display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 10px 0; border-radius: 10px; color: var(--muted); font-size: 12.5px; cursor: pointer; }
+  .tile:hover { background: var(--hover); color: var(--text); }
+  .tile:focus-visible { outline: 1.5px solid var(--muted); }
+  .tile i { width: 40px; height: 40px; border-radius: 10px; background: var(--field); display: grid; place-items: center; }
+  .tile img { width: 20px; height: 20px; }
+  :root:not([data-theme=light]) .tile img { filter: drop-shadow(0 0 .8px rgb(255 255 255 / .9)); }
+  .tile span { max-width: 68px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  [hidden] { display: none !important; }
+</style>
+</head>
+<body>
+<main>
+  <div id="time"><div id="clock"></div><div id="date"></div></div>
+  <form onsubmit="event.preventDefault(); const v = q.value.trim(); if (v) window.ipc.postMessage('nav:' + v)">
+    <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5"/><path d="M20 20l-4.2-4.2"/></svg>
+    <input id="q" aria-label="Search or enter address" autofocus autocomplete="off" spellcheck="false">
+  </form>
+  <nav id="essentials" aria-label="Essentials"></nav>
+</main>
+<script>
+  const q = document.getElementById('q');
+  const name = u => { try { return new URL(u).hostname.replace(/^www\./, '').split('.')[0]; } catch { return u; } };
+
+  function tick() {
+    const d = new Date();
+    document.getElementById('clock').textContent = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    document.getElementById('date').textContent = d.toLocaleDateString([], { weekday: 'long', day: 'numeric', month: 'long' });
+  }
+
+  // Called at load and by Rust when settings change.
+  function applySettings(s) {
+    document.documentElement.dataset.theme = s.theme;
+    q.placeholder = 'Search ' + s.engineName + ' or enter address';
+    document.getElementById('time').hidden = !s.startClock;
+    document.getElementById('essentials').hidden = !s.startEssentials;
+  }
+
+  document.getElementById('essentials').replaceChildren(...ESSENTIALS.map(u => {
+    const b = document.createElement('button');
+    b.className = 'tile';
+    b.title = u;
+    b.onclick = () => window.ipc.postMessage('nav:' + u);
+    const i = document.createElement('i');
+    const img = document.createElement('img');
+    img.alt = '';
+    img.src = new URL(u).origin + '/favicon.ico';
+    img.onerror = () => img.style.visibility = 'hidden';
+    const label = document.createElement('span');
+    label.textContent = name(u);
+    i.append(img);
+    b.append(i, label);
+    return b;
+  }));
+  tick();
+  applySettings(VELOCITY);
+  setInterval(tick, 10000);
+  addEventListener('focus', () => q.focus());
+</script>
+</body>
+</html>
