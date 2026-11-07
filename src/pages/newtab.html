@@ -4,88 +4,288 @@
 <meta charset="utf-8">
 <title>New tab</title>
 <style>
-  /* Neutral greys only. --card must match Settings::card_rgba in settings.rs (shown before this page paints). */
+  /* Colours come from the user's settings via window.velocityTheme; Graphite defaults for the first paint. */
   :root {
-    --card: #202024; --text: #ececee; --muted: #a1a1aa;
-    --field: rgb(255 255 255 / .06); --field-focus: rgb(255 255 255 / .1); --hair: rgb(255 255 255 / .1); --hover: rgb(255 255 255 / .06);
+    --card: #202024; --text: #ececee; --muted-card: #a1a1aa; --accent: #ececee;
+    --field: rgb(236 236 238 / .07); --hair: rgb(236 236 238 / .1); --hover: rgb(236 236 238 / .06); --active: rgb(236 236 238 / .11);
     --font: "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
     --display: "Segoe UI Variable Display", "Segoe UI", system-ui, sans-serif;
   }
-  [data-theme=light] {
-    --card: #fafafb; --text: #18181b; --muted: #52525b;
-    --field: rgb(0 0 0 / .045); --field-focus: #fff; --hair: rgb(0 0 0 / .1); --hover: rgb(0 0 0 / .05);
-  }
   * { box-sizing: border-box; }
   html, body { margin: 0; height: 100%; overflow: hidden; }
-  body { display: grid; place-items: center; background: var(--card); color: var(--text); font: 15px var(--font); }
+  body { display: flex; padding: 7vh 6vw; background: var(--card); color: var(--text); font: 15px var(--font); }
   ::selection { background: var(--hair); }
-  main { width: min(560px, 86vw); display: flex; flex-direction: column; align-items: center; translate: 0 -6vh; }
-  #time { text-align: center; margin-bottom: 28px; }
-  #clock { font: 300 56px/1 var(--display); letter-spacing: -.02em; font-variant-numeric: tabular-nums; }
-  #date { margin-top: 8px; color: var(--muted); }
+
+  /* Background media sits under everything; dim and blur come from settings. */
+  #bg { position: fixed; inset: 0; z-index: 0; overflow: hidden; }
+  #bg > * { width: 100%; height: 100%; object-fit: var(--bg-fit, cover); filter: blur(var(--bg-blur, 0px)); transform: scale(var(--bg-scale, 1)); }
+  #bg::after { content: ""; position: absolute; inset: 0; background: rgb(0 0 0 / var(--bg-dim, 0)); }
+  [data-bg=true] body { text-shadow: 0 1px 12px rgb(0 0 0 / .35); }
+  [data-bg=true] #date, [data-bg=true] .tile { color: var(--text); }
+
+  /* Glass styles for the search field, the Essentials tiles and the analog face. */
+  [data-glass=frosted][data-bg=true] .glass { background: rgb(0 0 0 / .32); backdrop-filter: blur(14px); }
+  [data-glass=frosted][data-bg=true] form:focus-within { background: rgb(0 0 0 / .45); }
+  /* Liquid glass: the backdrop is bent by an SVG displacement map (#liquid) and lifted with a bright rim.
+     Browsers without SVG backdrop filters keep the plain blur from the first declaration. */
+  [data-glass=liquid] .glass {
+    background: rgb(255 255 255 / .07);
+    backdrop-filter: blur(2px) saturate(170%) brightness(1.06);
+    backdrop-filter: url(#liquid) blur(2px) saturate(170%) brightness(1.06);
+    box-shadow: inset 0 1px 0 rgb(255 255 255 / .5), inset 0 -1px 1px rgb(255 255 255 / .12),
+      inset 0 0 0 1px rgb(255 255 255 / .16), inset 0 0 18px rgb(255 255 255 / .06), 0 10px 30px rgb(0 0 0 / .22);
+  }
+  [data-glass=liquid] form { border-radius: 26px; }
+  [data-glass=liquid] form:focus-within { background: rgb(255 255 255 / .12); }
+  [data-glass=liquid] .tile i { border-radius: 14px; }
+  [data-glass=liquid] #analog .face { fill: none; stroke: none; }
+  #analog { border-radius: 50%; }
+
+  /* Free layout: the clock and the search block each sit at their own % position; drag them in arrange mode. */
+  [data-pos=free] main { position: static; }
+  [data-pos=free] #time, [data-pos=free] #sgroup { position: fixed; z-index: 2; translate: -50% -50%; margin: 0; width: max-content; max-width: 92vw; }
+  [data-pos=free] #sgroup { width: min(var(--nt-width, 560px), 92vw); }
+  #arrange { position: fixed; right: 16px; bottom: 16px; z-index: 3; display: flex; align-items: center; gap: 8px; height: 34px; padding: 0 14px; border: 0; border-radius: 10px;
+    background: rgb(0 0 0 / .35); color: #fff; font: 13px var(--font); cursor: pointer; opacity: 0; transition: opacity .2s; backdrop-filter: blur(10px); }
+  body:hover #arrange, #arrange:focus-visible, .arranging #arrange { opacity: 1; }
+  #arrange svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+  .arranging #time, .arranging #sgroup { outline: 1.5px dashed rgb(255 255 255 / .7); outline-offset: 10px; border-radius: 12px; cursor: grab; user-select: none; }
+  .arranging #time:active, .arranging #sgroup:active { cursor: grabbing; }
+  .arranging #sgroup * { pointer-events: none; }
+  #hint { position: fixed; left: 50%; top: 16px; translate: -50% 0; z-index: 3; padding: 8px 14px; border-radius: 10px; background: rgb(0 0 0 / .55); color: #fff; font-size: 13px; }
+
+  #fx { position: fixed; inset: 0; z-index: 1; pointer-events: none; overflow: hidden; }
+  #fx i { position: absolute; top: 0; left: 0; }
+
+  main { position: relative; z-index: 2; width: min(var(--nt-width, 560px), 100%); display: flex; flex-direction: column; align-items: var(--nt-items, center); }
+  #time { display: flex; flex-direction: column; align-items: var(--nt-items, center); margin: 0 0 28px; }
+  [data-order=search] #time { order: 2; margin: 28px 0 0; }
+  #sgroup { width: 100%; display: flex; flex-direction: column; align-items: var(--nt-items, center); }
+  #clock { font: var(--clock-weight, 300) var(--clock-size, 56px)/1 var(--display); letter-spacing: -.02em; font-variant-numeric: tabular-nums; }
+  #analog { width: calc(var(--clock-size, 56px) * 2.4); height: calc(var(--clock-size, 56px) * 2.4); }
+  #analog .face { fill: var(--field); stroke: var(--hair); }
+  #time { position: relative; }
+  #analog .tick { stroke: var(--muted-card); stroke-width: 1.4; stroke-linecap: round; }
+  #analog .hand { stroke: var(--text); stroke-linecap: round; }
+  #analog .sec { stroke: var(--accent); stroke-width: 1; stroke-linecap: round; }
+  #analog .hub { fill: var(--accent); }
+  #date { margin-top: 10px; color: var(--muted-card); }
   form { width: 100%; display: flex; align-items: center; gap: 12px; height: 48px; padding: 0 18px; border-radius: 12px; background: var(--field); }
-  form:focus-within { background: var(--field-focus); box-shadow: inset 0 0 0 1px var(--hair); }
-  form svg { width: 17px; height: 17px; flex: none; fill: none; stroke: var(--muted); stroke-width: 1.8; stroke-linecap: round; }
+  form:focus-within { background: var(--active); box-shadow: inset 0 0 0 1px var(--hair); }
+  form svg { width: 17px; height: 17px; flex: none; fill: none; stroke: var(--muted-card); stroke-width: 1.8; stroke-linecap: round; }
   input { flex: 1; min-width: 0; height: 100%; border: 0; outline: none; background: none; color: var(--text); font: inherit; }
-  input::placeholder { color: var(--muted); }
-  #essentials { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; margin-top: 24px; }
+  input::placeholder { color: var(--muted-card); }
+  #essentials { display: flex; flex-wrap: wrap; justify-content: var(--nt-items, center); gap: 8px; margin-top: 24px; }
   #essentials:empty { display: none; }
-  .tile { all: unset; width: 72px; display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 10px 0; border-radius: 10px; color: var(--muted); font-size: 12.5px; cursor: pointer; }
+  .tile { all: unset; width: 72px; display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 10px 0; border-radius: 10px; color: var(--muted-card); font-size: 12.5px; cursor: pointer; }
   .tile:hover { background: var(--hover); color: var(--text); }
-  .tile:focus-visible { outline: 1.5px solid var(--muted); }
+  .tile:focus-visible { outline: 1.5px solid var(--accent); }
   .tile i { width: 40px; height: 40px; border-radius: 10px; background: var(--field); display: grid; place-items: center; }
+  [data-glass=none] .glass, [data-bg=false][data-glass=frosted] .glass { backdrop-filter: none; }
   .tile img { width: 20px; height: 20px; }
-  :root:not([data-theme=light]) .tile img { filter: drop-shadow(0 0 .8px rgb(255 255 255 / .9)); }
+  [data-dark=true] .tile img { filter: drop-shadow(0 0 .8px rgb(255 255 255 / .9)); }
   .tile span { max-width: 68px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   [hidden] { display: none !important; }
 </style>
 </head>
 <body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <filter id="liquid" x="0" y="0" width="100%" height="100%" color-interpolation-filters="sRGB">
+    <feTurbulence type="fractalNoise" baseFrequency="0.006 0.01" numOctaves="2" seed="11" result="noise"/>
+    <feGaussianBlur in="noise" stdDeviation="2.5" result="soft"/>
+    <feDisplacementMap in="SourceGraphic" in2="soft" scale="42" xChannelSelector="R" yChannelSelector="G"/>
+  </filter>
+</svg>
+<div id="bg" aria-hidden="true"></div>
+<div id="fx" aria-hidden="true"></div>
+<div id="hint" hidden>Drag the clock and the search box where you want them</div>
+<button id="arrange" type="button" aria-pressed="false"><svg viewBox="0 0 24 24"><path d="M12 3v18M3 12h18M12 3l-3 3M12 3l3 3M12 21l-3-3M12 21l3-3M3 12l3-3M3 12l3 3M21 12l-3-3M21 12l-3 3"/></svg><span>Arrange</span></button>
 <main>
-  <div id="time"><div id="clock"></div><div id="date"></div></div>
-  <form onsubmit="event.preventDefault(); const v = q.value.trim(); if (v) window.ipc.postMessage('nav:' + v)">
-    <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5"/><path d="M20 20l-4.2-4.2"/></svg>
-    <input id="q" aria-label="Search or enter address" autofocus autocomplete="off" spellcheck="false">
-  </form>
-  <nav id="essentials" aria-label="Essentials"></nav>
+  <div id="time">
+    <div id="clock"></div>
+    <svg id="analog" class="glass" viewBox="0 0 100 100" aria-hidden="true">
+      <circle class="face" cx="50" cy="50" r="48"/>
+      <g id="ticks"></g>
+      <line id="hh" class="hand" x1="50" y1="50" x2="50" y2="27" stroke-width="3.2"/>
+      <line id="mh" class="hand" x1="50" y1="50" x2="50" y2="14" stroke-width="2.2"/>
+      <line id="sh" class="sec" x1="50" y1="58" x2="50" y2="10"/>
+      <circle class="hub" cx="50" cy="50" r="2.2"/>
+    </svg>
+    <div id="date"></div>
+  </div>
+  <div id="sgroup">
+    <form id="search" class="glass" onsubmit="event.preventDefault(); const v = q.value.trim(); if (v) window.ipc.postMessage('nav:' + v)">
+      <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5"/><path d="M20 20l-4.2-4.2"/></svg>
+      <input id="q" aria-label="Search or enter address" autofocus autocomplete="off" spellcheck="false">
+    </form>
+    <nav id="essentials" aria-label="Essentials"></nav>
+  </div>
 </main>
 <script>
   const q = document.getElementById('q');
+  const $ = id => document.getElementById(id);
   const name = u => { try { return new URL(u).hostname.replace(/^www\./, '').split('.')[0]; } catch { return u; } };
+  let S = VELOCITY, timer = 0, shown = '', fxKey = '';
+  $('ticks').innerHTML = Array.from({ length: 12 }, (_, i) =>
+    `<line class="tick" x1="50" y1="${i % 3 ? 7 : 5}" x2="50" y2="11" transform="rotate(${i * 30} 50 50)"/>`).join('');
 
   function tick() {
     const d = new Date();
-    document.getElementById('clock').textContent = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-    document.getElementById('date').textContent = d.toLocaleDateString([], { weekday: 'long', day: 'numeric', month: 'long' });
+    const hour12 = S.clockFormat === 'auto' ? undefined : S.clockFormat === '12';
+    $('clock').textContent = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: S.clockSeconds ? '2-digit' : undefined, hour12 });
+    const [h, m, sec] = [d.getHours() % 12, d.getMinutes(), d.getSeconds()];
+    $('hh').setAttribute('transform', `rotate(${(h + m / 60) * 30} 50 50)`);
+    $('mh').setAttribute('transform', `rotate(${(m + sec / 60) * 6} 50 50)`);
+    $('sh').setAttribute('transform', `rotate(${sec * 6} 50 50)`);
+    $('date').textContent = d.toLocaleDateString([], { weekday: 'long', day: 'numeric', month: 'long' });
+  }
+
+  // The background file is served from the data dir's background folder (mapped in Rust); videos loop muted.
+  function background(s) {
+    document.documentElement.dataset.bg = !!s.bg;
+    const src = s.bg ? `https://bg.velocity.example/${s.bg}?v=${s.bgVer}` : '';
+    if (src === shown) return;
+    shown = src;
+    const el = !src ? null : /\.(mp4|webm)$/.test(s.bg)
+      ? Object.assign(document.createElement('video'), { src, autoplay: true, loop: true, muted: true, playsInline: true })
+      : Object.assign(document.createElement('img'), { src, alt: '' });
+    $('bg').replaceChildren(...(el ? [el] : []));
+  }
+
+  /* Particle effects. Snow follows pure-snow.js by hyperstown (MIT License, https://github.com/hyperstown/pure-snow.js):
+     each flake gets its own keyframes with a three-point sideways drift, a random scale, opacity, duration and a
+     negative delay so the sky is already full. Rain and stars reuse the same generator. Off under reduced motion. */
+  function effects(s) {
+    const key = s.effect + s.effectAmount;
+    if (key === fxKey) return;
+    fxKey = key;
+    const fx = $('fx');
+    fx.replaceChildren();
+    if (s.effect === 'none' || matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+    const r = (a, b) => a + Math.random() * (b - a);
+    let css = '';
+    const flakes = [];
+    for (let i = 0; i < s.effectAmount; i++) {
+      const el = document.createElement('i');
+      const x = r(0, 100);
+      if (s.effect === 'snow') {
+        const size = r(3, 9), turn = r(.3, .8), off = r(-6, 10);
+        el.style.cssText = `width:${size}px;height:${size}px;border-radius:50%;background:#fff;opacity:${r(.35, .95)};filter:blur(${size > 7 ? 1 : 0}px);animation:f${i} ${r(10, 26)}s ${-r(0, 26)}s linear infinite`;
+        css += `@keyframes f${i}{from{transform:translate(${x}vw,-10px)}${turn * 100}%{transform:translate(${x + off}vw,${turn * 100}vh)}to{transform:translate(${x + off / 2}vw,102vh)}}`;
+      } else if (s.effect === 'rain') {
+        const len = r(14, 26);
+        el.style.cssText = `width:1px;height:${len}px;background:linear-gradient(transparent,rgb(255 255 255 / ${r(.25, .55)}));animation:f${i} ${r(.45, 1.1)}s ${-r(0, 1.1)}s linear infinite`;
+        css += `@keyframes f${i}{from{transform:translate(${x}vw,-30px) rotate(8deg)}to{transform:translate(${x - 3}vw,104vh) rotate(8deg)}}`;
+      } else {
+        const size = r(1, 2.6);
+        el.style.cssText = `width:${size}px;height:${size}px;border-radius:50%;background:#fff;transform:translate(${x}vw,${r(0, 100)}vh);animation:tw ${r(2, 6)}s ${-r(0, 6)}s ease-in-out infinite alternate`;
+      }
+      flakes.push(el);
+    }
+    const style = document.createElement('style');
+    style.textContent = css + '@keyframes tw{from{opacity:.1}to{opacity:.9}}';
+    fx.append(style, ...flakes);
   }
 
   // Called at load and by Rust when settings change.
   function applySettings(s) {
-    document.documentElement.dataset.theme = s.theme;
+    S = s;
+    window.velocityTheme(s);
+    const root = document.documentElement, st = root.style;
+    st.setProperty('--clock-size', s.clockSize + 'px');
+    st.setProperty('--clock-weight', { thin: 200, regular: 400, bold: 650 }[s.clockWeight]);
+    st.setProperty('--bg-dim', s.bgDim / 100);
+    st.setProperty('--bg-blur', s.bgBlur + 'px');
+    st.setProperty('--bg-scale', s.bgBlur ? 1.06 : 1);
+    st.setProperty('--bg-fit', s.bgFit);
+    st.setProperty('--nt-width', s.ntWidth + 'px');
+    root.dataset.pos = s.ntPos === 'free' ? 'free' : 'grid';
+    root.dataset.glass = s.glass;
+    if (s.ntPos === 'free') {
+      document.body.style.alignItems = document.body.style.justifyContent = '';
+      st.setProperty('--nt-items', 'center');
+      place($('time'), s.clockX, s.clockY);
+      place($('sgroup'), s.searchX, s.searchY);
+    } else {
+      const [v, h] = s.ntPos;
+      document.body.style.alignItems = { t: 'flex-start', c: 'center', b: 'flex-end' }[v];
+      document.body.style.justifyContent = { l: 'flex-start', c: 'center', r: 'flex-end' }[h];
+      st.setProperty('--nt-items', { l: 'flex-start', c: 'center', r: 'flex-end' }[h]);
+      for (const el of [$('time'), $('sgroup')]) el.style.left = el.style.top = '';
+    }
+    root.dataset.order = s.ntOrder;
     q.placeholder = 'Search ' + s.engineName + ' or enter address';
-    document.getElementById('time').hidden = !s.startClock;
-    document.getElementById('essentials').hidden = !s.startEssentials;
+    $('search').hidden = !s.ntSearch;
+    $('time').hidden = !s.startClock;
+    $('clock').hidden = s.clockStyle !== 'digital';
+    $('analog').style.display = s.clockStyle === 'analog' ? '' : 'none';
+    $('sh').style.display = s.clockSeconds ? '' : 'none';
+    $('date').hidden = !s.clockDate;
+    $('essentials').hidden = !s.startEssentials;
+    background(s);
+    effects(s);
+    clearInterval(timer);
+    timer = setInterval(tick, s.clockSeconds || s.clockStyle === 'analog' ? 1000 : 10000);
+    tick();
   }
 
-  document.getElementById('essentials').replaceChildren(...ESSENTIALS.map(u => {
-    const b = document.createElement('button');
-    b.className = 'tile';
-    b.title = u;
-    b.onclick = () => window.ipc.postMessage('nav:' + u);
-    const i = document.createElement('i');
-    const img = document.createElement('img');
-    img.alt = '';
-    img.src = new URL(u).origin + '/favicon.ico';
-    img.onerror = () => img.style.visibility = 'hidden';
-    const label = document.createElement('span');
-    label.textContent = name(u);
-    i.append(img);
-    b.append(i, label);
-    return b;
-  }));
-  tick();
+  // Called at load and by Rust when the Essentials list changes.
+  function renderEssentials(list) {
+    $('essentials').replaceChildren(...list.map(u => {
+      const b = document.createElement('button');
+      b.className = 'tile';
+      b.title = u;
+      b.onclick = () => window.ipc.postMessage('nav:' + u);
+      const i = document.createElement('i');
+      i.className = 'glass';
+      const img = document.createElement('img');
+      img.alt = '';
+      img.src = new URL(u).origin + '/favicon.ico';
+      img.onerror = () => img.style.visibility = 'hidden';
+      const label = document.createElement('span');
+      label.textContent = name(u);
+      i.append(img);
+      b.append(i, label);
+      return b;
+    }));
+  }
+  function place(el, x, y) { el.style.left = x + '%'; el.style.top = y + '%'; }
+
+  /* Arrange mode: drag the clock or the search block; the drop position is saved as % of the page.
+     Leaving the grid keeps the other element where it currently is. */
+  const centre = el => { const r = el.getBoundingClientRect(); return [(r.left + r.width / 2) / innerWidth * 100, (r.top + r.height / 2) / innerHeight * 100]; };
+  const savePos = (which, [x, y]) => window.ipc.postMessage(`ntpos:${which}:${Math.round(x)}:${Math.round(y)}`);
+  function arrange(on) {
+    document.body.classList.toggle('arranging', on);
+    $('arrange').setAttribute('aria-pressed', on);
+    $('arrange').querySelector('span').textContent = on ? 'Done' : 'Arrange';
+    $('hint').hidden = !on;
+  }
+  $('arrange').onclick = () => arrange(!document.body.classList.contains('arranging'));
+  addEventListener('keydown', e => { if (e.key === 'Escape') arrange(false); });
+  for (const [el, which] of [[$('time'), 'clock'], [$('sgroup'), 'search']]) {
+    el.addEventListener('pointerdown', e => {
+      if (!document.body.classList.contains('arranging')) return;
+      e.preventDefault();
+      if (S.ntPos !== 'free') {
+        // Freeze both where they are now, then switch to free placement.
+        const other = which === 'clock' ? [$('sgroup'), 'search'] : [$('time'), 'clock'];
+        const [cx, cy] = centre(el), [ox, oy] = centre(other[0]);
+        root().dataset.pos = 'free';
+        place(el, cx, cy); place(other[0], ox, oy);
+        savePos(other[1], [ox, oy]);
+      }
+      const [sx, sy] = centre(el), px = e.clientX, py = e.clientY;
+      el.setPointerCapture(e.pointerId);
+      const move = m => place(el, Math.min(100, Math.max(0, sx + (m.clientX - px) / innerWidth * 100)), Math.min(100, Math.max(0, sy + (m.clientY - py) / innerHeight * 100)));
+      el.addEventListener('pointermove', move);
+      el.addEventListener('pointerup', () => { el.removeEventListener('pointermove', move); savePos(which, centre(el)); }, { once: true });
+    });
+  }
+  const root = () => document.documentElement;
+
+  renderEssentials(ESSENTIALS);
   applySettings(VELOCITY);
-  setInterval(tick, 10000);
   addEventListener('focus', () => q.focus());
 </script>
 </body>

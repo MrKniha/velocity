@@ -4,7 +4,7 @@ Neutral, quiet browser chrome. Greys only: no accent colour, no gradients, no de
 
 ## Colour
 
-Dark is the default; light is a full alternative. Every neutral is a ground or a white/black wash at a fixed opacity.
+The user owns the palette. Settings store four colours (`frame`, `card`, `text`, `accent`, validated `#rrggbb`) and fourteen presets fill them in: Graphite (default), Black and Paper of our own, plus the official palettes of Catppuccin (Mocha, Macchiato, Latte), Tokyo Night, Nord, Dracula, Gruvbox (dark, light), Everforest and Solarized (dark, light), mapped as frame = darker ground, card = base, text, accent. The settings page groups them into Dark and Light by frame luminance and draws each as a miniature window. `THEME_JS` in `main.rs` derives every other token from those four, the same way for all built-in pages: muted = text mixed 62% into the ground, washes = text at fixed opacities, active = accent at 11% (20% when the accent differs from the text). The table below is Graphite and Paper. Window opacity (40–100%) and tab UI text size (12–16px) are settings too; opacity uses a layered window, and is switched off entirely at 100%.
 
 | Token | Dark | Light | Use |
 |---|---|---|---|
@@ -40,6 +40,14 @@ Compact mode hides either layout; the cursor reaching that window edge reveals i
 
 A white dot with two fading trails (35% and 20% white) on a `#141416` tile with 14/64 corners: a point in motion. Monochrome. `assets/logo.svg` and `src/icon.rs` draw the same shapes.
 
+## New tab
+
+Background: an image, GIF or video the user picks (or a Wallpaper Engine wallpaper: videos as-is, scene/web ones by their preview image) is copied to `<data>/background/bg.<ext>` and shown full-bleed with user-set darkening, blur and fill/fit. With a background on, text gets a soft shadow and the search field and tiles turn into dark frosted glass. The content block (clock, search, Essentials) sits on a 3x3 position grid, with clock-first or search-first order and a width setting, or in Free mode the clock and the search block each sit at their own % position, dragged in place with the new tab's Arrange button. Glass styles for the search field, tiles and analog face: Plain, Frosted (blur over a background) and Liquid (an SVG displacement map bends the backdrop, plus a bright inner rim and soft drop). Interface size zooms all of Velocity's own pages (the tab UI box grows with it); Website zoom is the default zoom for sites.
+
 ## Motion
 
-None. Hovers and state changes switch instantly.
+Chrome: none; hovers and state changes switch instantly. New tab only: optional snow, rain or stars (snow follows pure-snow.js, MIT), all off under reduced motion.
+
+## Settings page
+
+Left category navigation (Appearance, New tab, Clock, Effects, Essentials, Tabs and window, Search, Shortcuts) with one category shown at a time; it collapses to a horizontal strip under 720px.

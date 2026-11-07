@@ -2,11 +2,12 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod icon;
+mod media;
 mod settings;
 
 use std::path::{Path, PathBuf};
 
-use settings::{Settings, ENGINES};
+use settings::{Settings, ENGINES, PRESETS};
 use tao::{
     event::{Event, WindowEvent},
     event_loop::{ControlFlow, EventLoopBuilder, EventLoopProxy},
@@ -19,7 +20,10 @@ use windows::Win32::{
         Dwm::{DwmSetWindowAttribute, DWMWA_USE_IMMERSIVE_DARK_MODE},
         Gdi::{CreateRoundRectRgn, SetWindowRgn},
     },
-    UI::WindowsAndMessaging::{SetWindowPos, HWND_TOP, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE},
+    UI::WindowsAndMessaging::{
+        GetWindowLongPtrW, SetLayeredWindowAttributes, SetWindowLongPtrW, SetWindowPos, GWL_EXSTYLE, HWND_TOP,
+        LWA_ALPHA, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, WS_EX_LAYERED,
+    },
 };
 use wry::{
     dpi::{LogicalPosition, LogicalSize},
@@ -48,6 +52,7 @@ enum UserEvent {
     Setting(String),
     PageKey(String),
     PageNav(u32, String),
+    PagePos(String),
     NewTab(String),
     UrlChanged(u32, String),
     TitleChanged(u32, String),
@@ -74,18 +79,27 @@ struct Browser {
     settings: Settings,
     settings_view: Option<WebView>,
     peeking: bool,
+    we_dirs: Vec<PathBuf>,
+    wallpapers: Vec<media::Wallpaper>,
 }
 
 impl Browser {
-    /// Data the built-in pages read at load: settings, essentials and the option lists.
+    /// Data the built-in pages read at load: settings, essentials, the option lists and the theme helper.
+    /// Init scripts stay on a webview across navigations, so this only runs on our own (non-http) pages:
+    /// a site the user later opens in the same tab must not see their Essentials.
     fn page_init_js(&self) -> String {
         let essentials: Vec<String> = self.essentials.iter().map(|e| js_str(e)).collect();
         let engines: Vec<String> = ENGINES.iter().map(|(k, name, _)| format!("['{k}','{name}']")).collect();
+        let presets: Vec<String> = PRESETS
+            .iter()
+            .map(|(k, name, f, c, t, a)| format!("['{k}','{name}','{f}','{c}','{t}','{a}']"))
+            .collect();
         format!(
-            "window.VELOCITY={};window.ESSENTIALS=[{}];window.ENGINES=[{}];",
+            "if(!/^https?:$/.test(location.protocol)){{{THEME_JS}window.VELOCITY={};window.ESSENTIALS=[{}];window.ENGINES=[{}];window.PRESETS=[{}];}}",
             self.settings.to_js(),
             essentials.join(","),
-            engines.join(",")
+            engines.join(","),
+            presets.join(",")
         )
     }
 
@@ -108,7 +122,6 @@ impl Browser {
             .with_extensions_path(self.dir.join("extensions"))
             .with_devtools(true)
             .with_initialization_script(PAGE_KEYS_JS)
-            // Only the new-tab page needs this, but it holds nothing a site couldn't read elsewhere.
             .with_initialization_script_for_main_only(if new_tab { init } else { String::new() }, true)
             // Pages can post anything: only shortcuts and "navigate this same tab" are accepted from them.
             .with_ipc_handler(move |req| {
@@ -117,6 +130,9 @@ impl Browser {
                     let _ = p1.send_event(UserEvent::PageKey(k.to_string()));
                 } else if let Some(q) = body.strip_prefix("nav:") {
                     let _ = p1.send_event(UserEvent::PageNav(id, q.to_string()));
+                } else if let Some(p) = body.strip_prefix("ntpos:") {
+                    // Dragging on the new tab page; worst case a site rearranges the user's new tab layout.
+                    let _ = p1.send_event(UserEvent::PagePos(p.to_string()));
                 }
             })
             .with_on_page_load_handler(move |ev, url| {
@@ -135,6 +151,11 @@ impl Browser {
             .build_as_child(&self.window)
             .expect("create tab webview");
         round_corners(&view, &self.window, &self.settings, bounds);
+        if new_tab {
+            media::map(&view, media::BG_HOST, &media::bg_dir(&self.dir));
+        } else {
+            let _ = view.zoom(self.settings.page_zoom as f64 / 100.0);
+        }
         let shown_url = if new_tab { String::new() } else { url.to_string() };
         self.tabs.push(Tab { id, title: "New tab".into(), url: shown_url, view, unseen: false });
         self.activate(self.tabs.len() - 1);
@@ -150,6 +171,7 @@ impl Browser {
         if url.starts_with("http") {
             if tab.url.is_empty() {
                 let _ = tab.view.set_background_color((255, 255, 255, 255));
+                let _ = tab.view.zoom(self.settings.page_zoom as f64 / 100.0);
             }
             tab.url = url;
             tab.unseen |= background;
@@ -203,8 +225,18 @@ impl Browser {
             None if host(url).is_empty() => return,
             None => self.essentials.push(url.to_string()),
         }
+        self.essentials_changed();
+    }
+
+    /// Save the Essentials and show the new list everywhere it is drawn.
+    fn essentials_changed(&self) {
         save_essentials(&self.dir, &self.essentials);
         self.sync_ui();
+        let list: Vec<String> = self.essentials.iter().map(|e| js_str(e)).collect();
+        let js = format!("renderEssentials([{}])", list.join(","));
+        for view in self.tabs.iter().filter(|t| t.url.is_empty()).map(|t| &t.view).chain(self.settings_view.as_ref()) {
+            let _ = view.evaluate_script(&js);
+        }
     }
 
     /// Push the full state to the sidebar; small enough that diffing isn't worth it.
@@ -286,8 +318,48 @@ impl Browser {
             .build_as_child(&self.window)
             .expect("create settings webview");
         round_corners(&view, &self.window, &self.settings, bounds);
+        media::map(&view, media::BG_HOST, &media::bg_dir(&self.dir));
         let _ = view.focus();
         self.settings_view = Some(view);
+    }
+
+    /// Find Wallpaper Engine wallpapers and list them in the settings page (previews via mapped hosts).
+    fn scan_wallpapers(&mut self) {
+        self.we_dirs = media::workshop_dirs();
+        self.wallpapers = media::scan(&self.we_dirs);
+        let Some(view) = &self.settings_view else { return };
+        for (i, dir) in self.we_dirs.iter().enumerate() {
+            media::map(view, &media::we_host(i), dir);
+        }
+        let items: Vec<String> = self
+            .wallpapers
+            .iter()
+            .map(|w| {
+                format!(
+                    "{{lib:{},id:{},title:{},kind:{},preview:{}}}",
+                    w.library, js_str(&w.id), js_str(&w.title), js_str(&w.kind), js_str(&w.preview)
+                )
+            })
+            .collect();
+        let _ = view.evaluate_script(&format!("renderWallpapers([{}],{})", items.join(","), self.we_dirs.len()));
+    }
+
+    /// Install a new background file and show it everywhere.
+    fn set_background(&mut self, src: Option<PathBuf>) {
+        let name = match src {
+            Some(path) => match media::install(&self.dir, &path) {
+                Some(name) => name,
+                None => return,
+            },
+            None => {
+                media::clear(&self.dir);
+                String::new()
+            }
+        };
+        self.settings.bg = name;
+        self.settings.bg_ver += 1;
+        self.settings.save(&self.dir);
+        self.apply_settings();
     }
 
     fn handle_setting(&mut self, msg: &str) {
@@ -295,8 +367,43 @@ impl Browser {
             self.settings_view = None;
             return;
         }
+        if let Some(cmd) = msg.strip_prefix("ess:") {
+            if edit_essentials(&mut self.essentials, cmd) {
+                self.essentials_changed();
+            }
+            return;
+        }
+        match msg {
+            "bg:pick" => {
+                let exts: Vec<&str> = settings::MEDIA_EXTS.to_vec();
+                let file = rfd::FileDialog::new()
+                    .set_title("Choose a new tab background")
+                    .add_filter("Images, GIFs and videos", &exts)
+                    .pick_file();
+                if file.is_some() {
+                    self.set_background(file);
+                }
+                return;
+            }
+            "bg:clear" => return self.set_background(None),
+            "we:scan" => return self.scan_wallpapers(),
+            _ => {}
+        }
+        if let Some(pick) = msg.strip_prefix("bg:we:") {
+            // Only wallpapers from our own scan can be chosen, by library index and folder id.
+            let (lib, id) = pick.split_once(':').unwrap_or(("", ""));
+            let found = self.wallpapers.iter().find(|w| lib.parse() == Ok(w.library) && w.id == id);
+            if let Some(w) = found {
+                let path = self.we_dirs[w.library].join(&w.id).join(&w.media);
+                self.set_background(Some(path));
+            }
+            return;
+        }
         if msg == "reset" {
+            let ver = self.settings.bg_ver + 1;
+            media::clear(&self.dir);
             self.settings = Settings::default();
+            self.settings.bg_ver = ver;
         } else if let Some((k, v)) = msg.strip_prefix("set:").and_then(|kv| kv.split_once('=')) {
             if !self.settings.set(k, v) {
                 return;
@@ -313,6 +420,15 @@ impl Browser {
         let (r, g, b) = self.settings.frame_rgb();
         self.window.set_background_color(Some((r, g, b, 255)));
         let _ = self.ui.set_background_color((r, g, b, 255));
+        set_opacity(&self.window, self.settings.opacity);
+        let card = self.settings.card_rgba();
+        for t in self.tabs.iter().filter(|t| t.url.is_empty()).map(|t| &t.view).chain(self.settings_view.as_ref()) {
+            let _ = t.set_background_color(card);
+        }
+        let zoom = self.settings.page_zoom as f64 / 100.0;
+        for t in self.tabs.iter().filter(|t| !t.url.is_empty()) {
+            let _ = t.view.zoom(zoom);
+        }
         if !self.settings.compact {
             self.peeking = false;
         }
@@ -407,11 +523,13 @@ type Xywh = (f64, f64, f64, f64);
 /// The tab UI's side of the window holds the UI itself, or in compact mode a strip that reveals it.
 fn layout_rects(w: f64, h: f64, s: &Settings) -> (Xywh, Xywh) {
     let gap = s.gap as f64;
+    let scale = s.ui_scale as f64 / 100.0; // the tab UI is drawn zoomed, so its box grows with it
     if s.tabs_top {
-        let top = if s.compact { gap.max(PEEK_STRIP) } else { TOP_BAR };
-        ((0.0, 0.0, w, TOP_BAR), (gap, top, (w - 2.0 * gap).max(1.0), (h - top - gap).max(1.0)))
+        let bar = TOP_BAR * scale;
+        let top = if s.compact { gap.max(PEEK_STRIP) } else { bar };
+        ((0.0, 0.0, w, bar), (gap, top, (w - 2.0 * gap).max(1.0), (h - top - gap).max(1.0)))
     } else {
-        let sw = s.sidebar_width as f64;
+        let sw = (s.sidebar_width as f64 * scale).min(w * 0.6);
         let side = if s.compact { gap.max(PEEK_STRIP) } else { sw };
         let (left, right) = if s.sidebar_right { (gap, side) } else { (side, gap) };
         let ui_x = if s.sidebar_right { w - sw } else { 0.0 };
@@ -426,6 +544,42 @@ fn rect((x, y, w, h): Xywh) -> Rect {
 /// Which tab is active after closing `closed`: keep the same tab, or take the neighbour that slid into its place.
 fn active_after_close(closed: usize, active: usize, remaining: usize) -> usize {
     if closed < active || active >= remaining { active.saturating_sub(1) } else { active }
+}
+
+/// An Essential typed by the user: "github.com" -> "https://github.com"; anything that isn't an
+/// http(s) address with a host (search text, javascript:, file:) is rejected.
+fn essential_url(input: &str) -> Option<String> {
+    let url = to_url(input, "\u{0}"); // search text gets the NUL prefix and is rejected below
+    let ok = (url.starts_with("https://") || url.starts_with("http://")) && !host(&url).is_empty();
+    ok.then_some(url).filter(|u| !u.contains(char::is_whitespace))
+}
+
+/// Apply one Essentials edit from the settings page; returns whether the list changed.
+/// Commands: `add:<address>`, `remove:<i>`, `edit:<i>:<address>`, `up:<i>`, `down:<i>`.
+fn edit_essentials(list: &mut Vec<String>, cmd: &str) -> bool {
+    let (op, rest) = cmd.split_once(':').unwrap_or((cmd, ""));
+    let (idx, arg) = rest.split_once(':').unwrap_or((rest, ""));
+    let i = idx.parse::<usize>().ok().filter(|&i| i < list.len());
+    let taken = |list: &Vec<String>, url: &str, skip: Option<usize>| {
+        list.iter().enumerate().any(|(j, e)| Some(j) != skip && host(e) == host(url))
+    };
+    match (op, i) {
+        ("add", _) => match essential_url(rest) {
+            Some(url) if !taken(list, &url, None) => list.push(url),
+            _ => return false,
+        },
+        ("remove", Some(i)) => {
+            list.remove(i);
+        }
+        ("edit", Some(i)) => match essential_url(arg) {
+            Some(url) if !taken(list, &url, Some(i)) => list[i] = url,
+            _ => return false,
+        },
+        ("up", Some(i)) if i > 0 => list.swap(i, i - 1),
+        ("down", Some(i)) if i + 1 < list.len() => list.swap(i, i + 1),
+        _ => return false,
+    }
+    true
 }
 
 /// "https://www.a.com:8080/x" -> "www.a.com:8080"; empty for URLs without a host.
@@ -508,6 +662,42 @@ fn round_corners(view: &WebView, window: &Window, settings: &Settings, bounds: R
     }
 }
 
+/// Whole-window opacity (page included). At 100% the layered style is removed so normal drawing costs nothing extra.
+fn set_opacity(window: &Window, percent: u32) {
+    let hwnd = HWND(window.hwnd() as _);
+    unsafe {
+        let style = GetWindowLongPtrW(hwnd, GWL_EXSTYLE);
+        if percent >= 100 {
+            SetWindowLongPtrW(hwnd, GWL_EXSTYLE, style & !(WS_EX_LAYERED.0 as isize));
+        } else {
+            SetWindowLongPtrW(hwnd, GWL_EXSTYLE, style | WS_EX_LAYERED.0 as isize);
+            let _ = SetLayeredWindowAttributes(hwnd, windows::Win32::Foundation::COLORREF(0), (percent * 255 / 100) as u8, LWA_ALPHA);
+        }
+    }
+}
+
+/// Shared by every built-in page: turns the four user colours into the full set of CSS variables
+/// (washes are the text or accent colour at fixed opacities, so any palette stays coherent).
+const THEME_JS: &str = r#"window.velocityTheme = s => {
+  const hex = h => [1, 3, 5].map(i => parseInt(h.slice(i, i + 2), 16));
+  const lum = c => (0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2]) / 255;
+  const f = hex(s.frame), c = hex(s.card), t = hex(s.text), a = hex(s.accent);
+  const mix = (x, y, k) => 'rgb(' + x.map((v, i) => Math.round(v * k + y[i] * (1 - k))).join(' ') + ')';
+  const wash = (x, o) => 'rgb(' + x.join(' ') + ' / ' + o + ')';
+  const neutral = a.join() === t.join();
+  const v = {
+    frame: s.frame, card: s.card, text: s.text, accent: s.accent,
+    muted: mix(t, f, .62), 'muted-card': mix(t, c, .62),
+    hair: wash(t, .1), hover: wash(t, .06), field: wash(t, .07), active: wash(a, neutral ? .11 : .2),
+    'on-accent': lum(a) > .55 ? '#111111' : '#ffffff', 'font-size': s.fontSize + 'px'
+  };
+  const root = document.documentElement;
+  for (const k in v) root.style.setProperty('--' + k, v[k]);
+  root.dataset.dark = lum(f) < .5;
+  root.style.zoom = s.uiScale / 100;
+};
+"#;
+
 fn main() -> wry::Result<()> {
     let dir = data_dir();
     std::fs::create_dir_all(dir.join("extensions")).ok();
@@ -539,6 +729,7 @@ fn main() -> wry::Result<()> {
     let ui_proxy = proxy.clone();
     let ui = WebViewBuilder::new_with_web_context(&mut ctx)
         .with_html(include_str!("pages/sidebar.html"))
+        .with_initialization_script(THEME_JS)
         .with_background_color((r, g, b, 255))
         .with_browser_extensions_enabled(true)
         .with_ipc_handler(move |req| {
@@ -549,8 +740,9 @@ fn main() -> wry::Result<()> {
     let essentials = load_essentials(&dir);
     let mut b = Browser {
         window, ui, ctx, dir, proxy, tabs: Vec::new(), active: 0, next_id: 1, essentials, settings,
-        settings_view: None, peeking: false,
+        settings_view: None, peeking: false, we_dirs: Vec::new(), wallpapers: Vec::new(),
     };
+    set_opacity(&b.window, b.settings.opacity);
     b.layout();
     b.open_tab(NEW_TAB);
 
@@ -567,6 +759,17 @@ fn main() -> wry::Result<()> {
             }
             Event::UserEvent(UserEvent::Setting(msg)) => b.handle_setting(&msg),
             Event::UserEvent(UserEvent::PageKey(k)) => b.shortcut(&k),
+            Event::UserEvent(UserEvent::PagePos(p)) => {
+                // "clock:<x>:<y>" or "search:<x>:<y>" in % of the page; only numbers pass Settings::set.
+                let mut parts = p.splitn(3, ':');
+                if let (Some(which @ ("clock" | "search")), Some(x), Some(y)) = (parts.next(), parts.next(), parts.next()) {
+                    let ok = b.settings.set(&format!("{which}_x"), x) & b.settings.set(&format!("{which}_y"), y);
+                    if ok && b.settings.set("nt_pos", "free") {
+                        b.settings.save(&b.dir);
+                        b.apply_settings();
+                    }
+                }
+            }
             Event::UserEvent(UserEvent::PageNav(id, q)) => {
                 if let Some(i) = b.index_of(id) {
                     let _ = b.tabs[i].view.load_url(&to_url(&q, b.settings.search_prefix()));
@@ -642,6 +845,29 @@ mod tests {
         assert_eq!(layout_rects(1000.0, 600.0, &s), ((0.0, 0.0, 1000.0, TOP_BAR), (8.0, TOP_BAR, 984.0, 600.0 - TOP_BAR - 8.0)));
         s.compact = true;
         assert_eq!(layout_rects(1000.0, 600.0, &s).1 .1, 8.0, "compact leaves only the gap on top");
+        s.compact = false;
+        s.ui_scale = 150;
+        assert_eq!(layout_rects(1000.0, 600.0, &s).0 .3, TOP_BAR * 1.5, "top bar grows with the interface size");
+        s.tabs_top = false;
+        s.sidebar_right = false;
+        assert_eq!(layout_rects(1000.0, 600.0, &s).0 .2, 360.0, "sidebar too");
+    }
+
+    #[test]
+    fn editing_essentials() {
+        let mut l: Vec<String> = vec!["https://a.com".into(), "https://b.com".into()];
+        assert!(edit_essentials(&mut l, "add:c.com"));
+        assert_eq!(l[2], "https://c.com");
+        assert!(!edit_essentials(&mut l, "add:a.com"), "no duplicate sites");
+        assert!(!edit_essentials(&mut l, "add:rust lang"), "search text is not an address");
+        assert!(!edit_essentials(&mut l, "add:javascript:alert(1)"));
+        assert!(edit_essentials(&mut l, "edit:0:https://x.org/start?y=1"));
+        assert_eq!(l[0], "https://x.org/start?y=1");
+        assert!(!edit_essentials(&mut l, "edit:0:b.com"), "edit can't collide with another tile");
+        assert!(edit_essentials(&mut l, "down:0") && l[1] == "https://x.org/start?y=1");
+        assert!(!edit_essentials(&mut l, "down:2"), "last can't move down");
+        assert!(edit_essentials(&mut l, "remove:1") && l.len() == 2);
+        assert!(!edit_essentials(&mut l, "remove:9"));
     }
 
     #[test]

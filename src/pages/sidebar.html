@@ -3,26 +3,19 @@
 <head>
 <meta charset="utf-8">
 <style>
-  /* Neutral greys only, no accent colour. --frame must match Settings::frame_rgb in settings.rs. */
+  /* Every colour comes from the user's settings via window.velocityTheme (THEME_JS in main.rs);
+     these are only the Graphite defaults for the first paint. */
   :root {
-    --frame: #18181b;
-    --text: #ececee;
-    --muted: #a1a1aa;
-    --hair: rgb(255 255 255 / .08);
-    --hover: rgb(255 255 255 / .05);
-    --active: rgb(255 255 255 / .1);
-    --field: rgb(255 255 255 / .06);
+    --frame: #18181b; --text: #ececee; --muted: #a1a1aa; --accent: #ececee;
+    --hair: rgb(236 236 238 / .1); --hover: rgb(236 236 238 / .06); --active: rgb(236 236 238 / .11); --field: rgb(236 236 238 / .07);
+    --font-size: 13px;
     --font: "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
   }
-  [data-theme=light] {
-    --frame: #e8e8ea; --text: #18181b; --muted: #52525b;
-    --hair: rgb(0 0 0 / .08); --hover: rgb(0 0 0 / .045); --active: #fff; --field: rgb(0 0 0 / .05);
-  }
   * { box-sizing: border-box; }
-  html, body { margin: 0; height: 100%; background: var(--frame); color: var(--text); font: 13px/1.3 var(--font); overflow: hidden; }
+  html, body { margin: 0; height: 100%; background: var(--frame); color: var(--text); font: var(--font-size)/1.3 var(--font); overflow: hidden; }
   ::selection { background: var(--active); }
   button { all: unset; cursor: default; }
-  :focus-visible { outline: 1.5px solid var(--muted); outline-offset: 1px; }
+  :focus-visible { outline: 1.5px solid var(--accent); outline-offset: 1px; }
   svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
   .ib { width: 28px; height: 28px; display: grid; place-items: center; color: var(--muted); border-radius: 6px; }
   .ib:hover { background: var(--hover); color: var(--text); }
@@ -42,7 +35,7 @@
   .tile.active { background: var(--active); }
   .tile img { width: 16px; height: 16px; }
   /* Dark-on-transparent favicons (GitHub) would vanish on the dark frame; a 1px halo keeps their edge. */
-  :root:not([data-theme=light]) img { filter: drop-shadow(0 0 .8px rgb(255 255 255 / .9)); }
+  [data-dark=true] img { filter: drop-shadow(0 0 .8px rgb(255 255 255 / .9)); }
 
   #new { display: flex; align-items: center; gap: 10px; color: var(--muted); border-radius: 8px; }
   #new:hover { color: var(--text); background: var(--hover); }
@@ -55,7 +48,7 @@
   .tab img, .tab .blank { width: 16px; height: 16px; flex: none; }
   .tab .blank { background: radial-gradient(circle, var(--muted) 2.5px, transparent 3px); }
   .tab span { flex: 1; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
-  .tab .mark { width: 6px; height: 6px; border-radius: 50%; background: var(--text); flex: none; }
+  .tab .mark { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); flex: none; }
   .tab .x { width: 22px; height: 22px; display: none; place-items: center; border-radius: 6px; color: var(--muted); flex: none; }
   .tab .x svg { width: 12px; height: 12px; }
   .tab:hover .x, .tab.active .x { display: grid; }
@@ -151,7 +144,7 @@
   // Called from Rust with the whole state on every change.
   function render(tabs, active, essentials, s) {
     const root = document.documentElement.dataset;
-    root.theme = s.theme;
+    window.velocityTheme(s);
     root.layout = s.tabsTop ? 'top' : 'side';
     root.side = s.sidebarRight ? 'right' : 'left';
     const cur = tabs.find(t => t.id === active);

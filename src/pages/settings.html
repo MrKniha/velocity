@@ -4,146 +4,399 @@
 <meta charset="utf-8">
 <title>Settings</title>
 <style>
-  /* Neutral greys only. --card must match Settings::card_rgba in settings.rs. */
+  /* Colours come from the user's settings via window.velocityTheme; Graphite defaults for the first paint. */
   :root {
-    --card: #202024; --text: #ececee; --muted: #a1a1aa;
-    --line: rgb(255 255 255 / .08); --control: rgb(255 255 255 / .08); --control-hover: rgb(255 255 255 / .12); --on: #ececee; --on-text: #18181b;
+    --card: #202024; --text: #ececee; --muted-card: #a1a1aa; --accent: #ececee; --on-accent: #111111;
+    --hair: rgb(236 236 238 / .1); --field: rgb(236 236 238 / .07); --hover: rgb(236 236 238 / .06); --active: rgb(236 236 238 / .11);
     --font: "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
   }
-  [data-theme=light] {
-    --card: #fafafb; --text: #18181b; --muted: #52525b;
-    --line: rgb(0 0 0 / .08); --control: rgb(0 0 0 / .06); --control-hover: rgb(0 0 0 / .1); --on: #18181b; --on-text: #fafafb;
-  }
   * { box-sizing: border-box; }
-  html, body { margin: 0; min-height: 100%; background: var(--card); color: var(--text); font: 13px/1.45 var(--font); }
-  html { scrollbar-width: thin; scrollbar-color: var(--control-hover) transparent; }
-  ::selection { background: var(--control-hover); }
-  body { padding: 40px 32px 64px; }
-  main { max-width: 600px; margin: 0 auto; }
-  header { display: flex; align-items: center; gap: 14px; margin-bottom: 8px; }
-  header svg { width: 36px; height: 36px; flex: none; }
-  h1 { font-size: 20px; font-weight: 600; margin: 0; }
-  #close { margin-left: auto; }
-  h2 { font-size: 13px; font-weight: 600; color: var(--muted); margin: 32px 0 6px; }
-  section { border-radius: 12px; background: rgb(127 127 127 / .06); }
-  .row { display: flex; align-items: center; gap: 16px; padding: 12px 16px; min-height: 52px; }
-  .row + .row { border-top: 1px solid var(--line); }
-  .label { flex: 1; }
-  .label span { display: block; color: var(--muted); }
-  kbd { font: 12px var(--font); padding: 1px 6px; border-radius: 4px; background: var(--control); }
-
+  html, body { margin: 0; height: 100%; background: var(--card); color: var(--text); font: 13px/1.45 var(--font); }
+  ::selection { background: var(--hair); }
+  body { display: grid; grid-template-columns: 210px minmax(0, 1fr); }
   button { font: inherit; color: inherit; cursor: pointer; }
-  :focus-visible { outline: 2px solid var(--muted); outline-offset: 2px; }
-  .btn { border: 0; background: var(--control); padding: 7px 14px; border-radius: 8px; }
-  .btn:hover { background: var(--control-hover); }
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
-  .seg { display: inline-flex; padding: 2px; gap: 2px; border-radius: 8px; background: var(--control); }
-  .seg button { border: 0; background: none; padding: 5px 12px; border-radius: 6px; color: var(--muted); }
+  /* Category navigation */
+  nav { padding: 28px 12px; border-right: 1px solid var(--hair); display: flex; flex-direction: column; gap: 2px; overflow-y: auto; }
+  nav header { display: flex; align-items: center; gap: 10px; padding: 0 10px 18px; }
+  nav header svg { width: 28px; height: 28px; flex: none; }
+  nav h1 { font-size: 16px; font-weight: 600; margin: 0; }
+  nav button { display: flex; align-items: center; gap: 10px; height: 34px; padding: 0 10px; border: 0; border-radius: 8px; background: none; color: var(--muted-card); text-align: left; }
+  nav button svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; flex: none; }
+  nav button:hover { background: var(--hover); color: var(--text); }
+  nav button[aria-current=true] { background: var(--active); color: var(--text); font-weight: 600; }
+  nav .spacer { flex: 1; }
+  #content { overflow-y: auto; scrollbar-width: thin; scrollbar-color: var(--hair) transparent; }
+  .page { max-width: 660px; margin: 0 auto; padding: 32px 32px 64px; }
+  .page:not(.on) { display: none; }
+  .page > h2 { font-size: 20px; font-weight: 600; margin: 0 0 4px; }
+  .page > p { margin: 0 0 8px; color: var(--muted-card); }
+  h3 { font-size: 13px; font-weight: 600; color: var(--muted-card); margin: 28px 0 6px; }
+
+  section { border-radius: 12px; background: var(--field); }
+  .row { display: flex; align-items: center; gap: 16px; padding: 12px 16px; min-height: 52px; }
+  .row + .row, .row + .stack, .stack + .row { border-top: 1px solid var(--hair); }
+  .stack { padding: 12px 16px; }
+  .label { flex: 1; }
+  .label span { display: block; color: var(--muted-card); }
+  kbd { font: 12px var(--font); padding: 1px 6px; border-radius: 4px; background: var(--field); }
+  .btn { border: 0; background: var(--field); padding: 7px 14px; border-radius: 8px; white-space: nowrap; }
+  .btn:hover { background: var(--hair); }
+  .btn.primary { background: var(--accent); color: var(--on-accent); }
+  .btns { display: flex; gap: 8px; flex-wrap: wrap; }
+
+  .seg { display: inline-flex; padding: 2px; gap: 2px; border-radius: 8px; background: var(--field); flex-wrap: wrap; }
+  .seg button { border: 0; background: none; padding: 5px 12px; border-radius: 6px; color: var(--muted-card); }
   .seg button:hover { color: var(--text); }
-  .seg button[aria-pressed=true] { background: var(--on); color: var(--on-text); }
-
-  .switch { appearance: none; width: 36px; height: 20px; border-radius: 10px; background: var(--control-hover); position: relative; cursor: pointer; margin: 0; }
-  .switch::after { content: ""; position: absolute; top: 3px; left: 3px; width: 14px; height: 14px; border-radius: 50%; background: var(--muted); }
-  .switch:checked { background: var(--on); }
-  .switch:checked::after { left: 19px; background: var(--on-text); }
-
+  .seg button[aria-pressed=true] { background: var(--accent); color: var(--on-accent); }
+  .switch { appearance: none; width: 36px; height: 20px; border-radius: 10px; background: var(--hair); position: relative; cursor: pointer; margin: 0; flex: none; }
+  .switch::after { content: ""; position: absolute; top: 3px; left: 3px; width: 14px; height: 14px; border-radius: 50%; background: var(--muted-card); }
+  .switch:checked { background: var(--accent); }
+  .switch:checked::after { left: 19px; background: var(--on-accent); }
   .range { display: flex; align-items: center; gap: 12px; }
-  .range output { min-width: 44px; text-align: right; color: var(--muted); font-variant-numeric: tabular-nums; }
-  input[type=range] { width: 160px; accent-color: var(--on); }
-
-  select { font: inherit; color: var(--text); background: var(--control); border: 0; border-radius: 8px; padding: 6px 10px; }
+  .range output { min-width: 48px; text-align: right; color: var(--muted-card); font-variant-numeric: tabular-nums; }
+  input[type=range] { width: 170px; accent-color: var(--accent); }
+  select { font: inherit; color: var(--text); background: var(--field); border: 0; border-radius: 8px; padding: 6px 10px; }
   select option { background: var(--card); }
 
-  .keys { display: grid; grid-template-columns: 1fr auto; padding: 4px 16px; color: var(--muted); }
+  /* Themes: each card is a tiny Velocity window in that palette. */
+  .themes h4 { font-size: 12px; font-weight: 600; color: var(--muted-card); margin: 0 0 8px; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(132px, 1fr)); gap: 10px; margin-bottom: 14px; }
+  .theme { border: 0; padding: 0; background: none; text-align: left; color: var(--muted-card); border-radius: 10px; display: flex; flex-direction: column; justify-content: flex-start; }
+  .theme .win { display: grid; grid-template-columns: 30% 1fr; gap: 4px; height: 64px; padding: 5px; border-radius: 10px; background: var(--f); box-shadow: inset 0 0 0 1px var(--hair); }
+  .theme .bar { display: flex; flex-direction: column; gap: 4px; padding-top: 3px; }
+  .theme .bar b { height: 4px; border-radius: 2px; background: var(--t); opacity: .35; }
+  .theme .bar b:first-child { background: var(--a); opacity: 1; width: 80%; }
+  .theme .pg { border-radius: 6px; background: var(--c); display: flex; align-items: center; justify-content: center; }
+  .theme .pg b { width: 60%; height: 7px; border-radius: 4px; background: var(--t); opacity: .18; }
+  .theme span { display: flex; align-items: center; gap: 6px; padding: 6px 2px 0; font-size: 12.5px; }
+  .theme span i { width: 10px; height: 10px; border-radius: 50%; background: var(--a); box-shadow: 0 0 0 1px var(--hair); flex: none; }
+  .theme:hover { color: var(--text); }
+  .theme[aria-pressed=true] { color: var(--text); font-weight: 600; }
+  .theme[aria-pressed=true] .win { box-shadow: 0 0 0 2px var(--accent); }
+  .color { display: flex; align-items: center; gap: 10px; }
+  .color code { font: 12px ui-monospace, Consolas, monospace; color: var(--muted-card); min-width: 64px; text-align: right; }
+  input[type=color] { width: 36px; height: 26px; padding: 0; border: 0; border-radius: 6px; background: none; cursor: pointer; }
+  input[type=color]::-webkit-color-swatch-wrapper { padding: 0; }
+  input[type=color]::-webkit-color-swatch { border: 1px solid var(--hair); border-radius: 6px; }
+
+  /* Background preview and Wallpaper Engine list */
+  .bgrow { display: flex; gap: 16px; align-items: center; }
+  #bgprev { width: 168px; aspect-ratio: 16 / 10; border-radius: 10px; overflow: hidden; background: var(--hair); flex: none; display: grid; place-items: center; color: var(--muted-card); font-size: 12px; }
+  #bgprev > img, #bgprev > video { width: 100%; height: 100%; object-fit: cover; }
+  #we { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; }
+  .wp { border: 0; padding: 0; background: none; text-align: left; color: var(--muted-card); }
+  .wp div { aspect-ratio: 16 / 10; border-radius: 10px; overflow: hidden; background: var(--hair); box-shadow: inset 0 0 0 1px var(--hair); }
+  .wp img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .wp span { display: block; padding: 6px 2px 0; font-size: 12.5px; color: var(--text); overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+  .wp small { display: block; padding: 0 2px; font-size: 11.5px; }
+  .wp:hover div { box-shadow: 0 0 0 2px var(--accent); }
+  .empty { color: var(--muted-card); padding: 4px 0; }
+
+  /* 3x3 position picker */
+  .pos { display: grid; grid-template-columns: repeat(3, 28px); gap: 4px; padding: 4px; border-radius: 8px; background: var(--field); }
+  .pos button { width: 28px; height: 22px; border: 0; border-radius: 5px; background: var(--hair); }
+  .pos button:hover { background: var(--muted-card); }
+  .pos button[aria-pressed=true] { background: var(--accent); }
+
+  .ess { display: flex; align-items: center; gap: 8px; padding: 8px 10px 8px 16px; }
+  .ess + .ess { border-top: 1px solid var(--hair); }
+  .ess img { width: 16px; height: 16px; flex: none; }
+  .ess input[type=text], #essnew { flex: 1; min-width: 0; height: 32px; padding: 0 10px; border: 0; border-radius: 8px; background: none; color: var(--text); font: inherit; }
+  .ess input[type=text]:hover, .ess input[type=text]:focus, #essnew { background: var(--field); outline: none; }
+  .ess .ib { width: 28px; height: 28px; border: 0; border-radius: 6px; background: none; color: var(--muted-card); display: grid; place-items: center; }
+  .ess .ib:hover { background: var(--field); color: var(--text); }
+  .ess .ib:disabled { opacity: .3; cursor: default; background: none; }
+  .ess svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+  .ess.add { border-top: 1px solid var(--hair); }
+  .err { color: #e5484d; font-size: 12px; padding: 0 16px 10px; }
+  .keys { display: grid; grid-template-columns: 1fr auto; padding: 4px 16px; color: var(--muted-card); }
   .keys > * { padding: 9px 0; }
-  .keys > :nth-child(n + 3) { border-top: 1px solid var(--line); }
+  .keys > :nth-child(n + 3) { border-top: 1px solid var(--hair); }
   .keys > b { font-weight: normal; color: var(--text); padding-right: 16px; }
-  footer { margin-top: 32px; display: flex; justify-content: flex-end; }
-  @media (max-width: 520px) {
-    body { padding: 28px 16px 48px; }
+
+  @media (max-width: 720px) {
+    body { grid-template-columns: 1fr; grid-template-rows: auto 1fr; }
+    nav { flex-direction: row; overflow-x: auto; padding: 10px; border-right: 0; border-bottom: 1px solid var(--hair); }
+    nav header, nav .spacer { display: none; }
+    nav button { flex: none; }
+    .page { padding: 22px 16px 48px; }
     .row { flex-wrap: wrap; row-gap: 8px; }
     .label { flex-basis: 100%; }
     .range { flex: 1; } .range input { flex: 1; }
+    .bgrow { flex-wrap: wrap; }
   }
   [hidden] { display: none !important; }
 </style>
 </head>
 <body>
-<main>
+<nav aria-label="Settings sections">
   <header>
     <svg viewBox="0 0 64 64" aria-hidden="true"><rect width="64" height="64" rx="14" fill="#141416"/><rect x="10" y="29" width="26" height="6" rx="3" fill="#fff" fill-opacity=".35"/><rect x="18" y="20" width="14" height="4" rx="2" fill="#fff" fill-opacity=".2"/><circle cx="42" cy="32" r="10" fill="#fff"/></svg>
     <h1>Settings</h1>
-    <button class="btn" id="close" title="Close (Esc)" onclick="send('close')">Done</button>
   </header>
+  <button data-go="look"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M12 3.5a8.5 8.5 0 0 0 0 17c1 0 1.5-.7 1.5-1.5 0-1.3-1.2-1.7-1.2-3 0-1 .8-1.5 1.7-1.5h2c2 0 3.5-1.5 3.5-3.5C19.5 6.8 16.2 3.5 12 3.5z"/></svg>Appearance</button>
+  <button data-go="newtab"><svg viewBox="0 0 24 24"><rect x="3.5" y="4.5" width="17" height="15" rx="2.5"/><circle cx="9" cy="10" r="1.8"/><path d="M4 17l5-4.5 3.5 3 3-2.5 4.5 4"/></svg>New tab</button>
+  <button data-go="clock"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/></svg>Clock</button>
+  <button data-go="effects"><svg viewBox="0 0 24 24"><path d="M12 3v18M4.2 7.5l15.6 9M4.2 16.5l15.6-9"/></svg>Effects</button>
+  <button data-go="ess"><svg viewBox="0 0 24 24"><rect x="4" y="4" width="6.5" height="6.5" rx="1.5"/><rect x="13.5" y="4" width="6.5" height="6.5" rx="1.5"/><rect x="4" y="13.5" width="6.5" height="6.5" rx="1.5"/><path d="M16.75 14v5.5M14 16.75h5.5"/></svg>Essentials</button>
+  <button data-go="tabs"><svg viewBox="0 0 24 24"><rect x="3.5" y="5" width="17" height="14" rx="2.5"/><path d="M9 5v14"/></svg>Tabs, size, window</button>
+  <button data-go="search"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5"/><path d="M20 20l-4.2-4.2"/></svg>Search</button>
+  <button data-go="keys"><svg viewBox="0 0 24 24"><rect x="3" y="6.5" width="18" height="11" rx="2"/><path d="M7 10.5h.01M11 10.5h.01M15 10.5h.01M8 14h8"/></svg>Shortcuts</button>
+  <span class="spacer"></span>
+  <button onclick="send('reset')"><svg viewBox="0 0 24 24"><path d="M4 11a8 8 0 1 1 2.3 5.7M4 4v7h7"/></svg>Reset all</button>
+  <button onclick="send('close')"><svg viewBox="0 0 24 24"><path d="M7 7l10 10M17 7L7 17"/></svg>Close <kbd style="margin-left:auto">Esc</kbd></button>
+</nav>
 
-  <h2>Appearance</h2>
-  <section>
-    <div class="row"><div class="label">Theme</div>
-      <div class="seg" data-key="theme"><button data-v="dark">Dark</button><button data-v="light">Light</button></div></div>
-    <div class="row"><div class="label">Page corners</div>
-      <div class="range"><input type="range" min="0" max="20" data-key="radius" aria-label="Page corner radius"><output></output></div></div>
-    <div class="row"><div class="label">Page spacing<span>Gap between the page and the window edge</span></div>
-      <div class="range"><input type="range" min="0" max="16" data-key="gap" aria-label="Page spacing"><output></output></div></div>
-  </section>
+<div id="content">
+  <div class="page" data-page="look">
+    <h2>Appearance</h2><p>Pick a theme, then fine-tune any colour.</p>
+    <h3>Theme</h3>
+    <section class="stack themes"><h4>Dark</h4><div class="grid" id="dark"></div><h4>Light</h4><div class="grid" id="light"></div></section>
+    <h3>Colours<span id="custom" style="font-weight:400"> · custom</span></h3>
+    <section>
+      <div class="row"><div class="label">Background<span>Behind the tabs, the toolbar and around the page</span></div><div class="color"><code></code><input type="color" data-key="frame" aria-label="Background colour"></div></div>
+      <div class="row"><div class="label">Page<span>Background of the new tab and of this settings page (websites keep their own)</span></div><div class="color"><code></code><input type="color" data-key="card" aria-label="Page colour"></div></div>
+      <div class="row"><div class="label">Text<span>Text and icons. Hover highlights and dividers are made from this colour.</span></div><div class="color"><code></code><input type="color" data-key="text" aria-label="Text colour"></div></div>
+      <div class="row"><div class="label">Accent<span>Highlights the open tab, switched-on toggles and the focused field. Set it to the text colour for no colour at all.</span></div><div class="color"><code></code><input type="color" data-key="accent" aria-label="Accent colour"></div></div>
+    </section>
+  </div>
 
-  <h2>Tabs</h2>
-  <section>
-    <div class="row"><div class="label">Tab layout</div>
-      <div class="seg" data-key="tabs_top"><button data-v="false">Sidebar</button><button data-v="true">Top bar</button></div></div>
-    <div class="row side-only"><div class="label">Sidebar position</div>
-      <div class="seg" data-key="sidebar_right"><button data-v="false">Left</button><button data-v="true">Right</button></div></div>
-    <div class="row side-only"><div class="label">Sidebar width</div>
-      <div class="range"><input type="range" min="200" max="360" step="4" data-key="sidebar_width" aria-label="Sidebar width"><output></output></div></div>
-    <div class="row"><div class="label">Compact mode<span>Hide the tabs; move the mouse to the window edge to show them. <kbd>Ctrl</kbd> <kbd>Alt</kbd> <kbd>C</kbd></span></div>
-      <input type="checkbox" class="switch" data-key="compact" aria-label="Compact mode"></div>
-  </section>
+  <div class="page" data-page="newtab">
+    <h2>New tab</h2><p>Your start page: background, layout and what's on it.</p>
+    <h3>Background</h3>
+    <section>
+      <div class="stack bgrow"><div id="bgprev">No background</div>
+        <div class="label">Image, GIF or video<span>PNG, JPG, WebP, GIF, MP4 or WebM. Videos play muted on a loop.</span>
+          <div class="btns" style="margin-top:10px"><button class="btn primary" onclick="send('bg:pick')">Choose file…</button><button class="btn" id="bgclear" onclick="send('bg:clear')">Remove</button></div></div></div>
+      <div class="row bg-only"><div class="label">Darken<span>Lays a dark tint over the picture so the clock and text stay readable</span></div><div class="range"><input type="range" min="0" max="80" data-key="bg_dim" aria-label="Darken background"><output></output></div></div>
+      <div class="row bg-only"><div class="label">Blur<span>Softens the picture so it sits behind the content</span></div><div class="range"><input type="range" min="0" max="20" data-key="bg_blur" aria-label="Blur background"><output></output></div></div>
+      <div class="row bg-only"><div class="label">Fit<span>Fill crops the picture to cover the page; Whole shows all of it, with bars if needed</span></div><div class="seg" data-key="bg_fit"><button data-v="cover">Fill</button><button data-v="contain">Whole</button></div></div>
+    </section>
+    <h3>Glass</h3>
+    <section>
+      <div class="row"><div class="label">Style<span>How the search box, Essentials tiles and analog clock look over the background. Frosted blurs what's behind; Liquid bends it like a lens with a bright rim.</span></div>
+        <div class="seg" data-key="glass"><button data-v="none">Plain</button><button data-v="frosted">Frosted</button><button data-v="liquid">Liquid</button></div></div>
+    </section>
+    <h3>Wallpaper Engine</h3>
+    <section class="stack">
+      <div class="row" style="padding:0 0 12px;min-height:0"><div class="label">Import from Wallpaper Engine<span>Video wallpapers play as they are; scene and web wallpapers use their preview image.</span></div><button class="btn" onclick="this.textContent='Searching…';send('we:scan')" id="wescan">Find wallpapers</button></div>
+      <div id="we"></div>
+    </section>
+    <h3>Layout</h3>
+    <section>
+      <div class="row"><div class="label">Position<span>Pick a spot on the grid, or choose Free and drag the clock and the search box anywhere: open a new tab and press Arrange in its bottom-right corner.</span></div><div style="display:flex;gap:10px;align-items:center"><div class="pos" id="pos" role="group" aria-label="Position"></div><div class="seg" data-key="nt_pos"><button data-v="free">Free</button></div></div></div>
+      <div class="row"><div class="label">Order<span>Which comes first from the top (grid positions only)</span></div><div class="seg" data-key="nt_order"><button data-v="clock">Clock first</button><button data-v="search">Search first</button></div></div>
+      <div class="row"><div class="label">Show search field</div><input type="checkbox" class="switch" data-key="nt_search" aria-label="Show search field"></div>
+      <div class="row"><div class="label">Search box width</div><div class="range"><input type="range" min="320" max="760" step="20" data-key="nt_width" aria-label="Content width"><output></output></div></div>
+      <div class="row"><div class="label">Show Essentials<span>Your pinned sites under the search box</span></div><input type="checkbox" class="switch" data-key="start_essentials" aria-label="Show Essentials on new tab"></div>
+    </section>
+  </div>
 
-  <h2>Search</h2>
-  <section>
-    <div class="row"><div class="label">Search engine<span>Used when what you type isn't an address</span></div>
-      <select id="engine" aria-label="Search engine"></select></div>
-  </section>
+  <div class="page" data-page="clock">
+    <h2>Clock</h2><p>Shown on the new tab page.</p>
+    <h3>Clock</h3>
+    <section>
+      <div class="row"><div class="label">Show clock</div><input type="checkbox" class="switch" data-key="start_clock" aria-label="Show clock"></div>
+      <div class="row clock-only"><div class="label">Style</div><div class="seg" data-key="clock_style"><button data-v="digital">Digital</button><button data-v="analog">Analog</button></div></div>
+      <div class="row clock-only"><div class="label">Time format<span>System follows your Windows setting</span></div><div class="seg" data-key="clock_format"><button data-v="auto">System</button><button data-v="12">12 h</button><button data-v="24">24 h</button></div></div>
+      <div class="row clock-only digital-only"><div class="label">Weight<span>Thickness of the numbers</span></div><div class="seg" data-key="clock_weight"><button data-v="thin">Thin</button><button data-v="regular">Regular</button><button data-v="bold">Bold</button></div></div>
+      <div class="row clock-only"><div class="label">Size<span>Digital: height of the numbers. Analog: the dial grows with it.</span></div><div class="range"><input type="range" min="32" max="120" step="4" data-key="clock_size" aria-label="Clock size"><output></output></div></div>
+      <div class="row clock-only"><div class="label">Show seconds</div><input type="checkbox" class="switch" data-key="clock_seconds" aria-label="Show seconds"></div>
+      <div class="row clock-only"><div class="label">Show date</div><input type="checkbox" class="switch" data-key="clock_date" aria-label="Show date"></div>
+    </section>
+  </div>
 
-  <h2>New tab</h2>
-  <section>
-    <div class="row"><div class="label">Show Essentials</div><input type="checkbox" class="switch" data-key="start_essentials" aria-label="Show Essentials on new tab"></div>
-    <div class="row"><div class="label">Show clock</div><input type="checkbox" class="switch" data-key="start_clock" aria-label="Show clock on new tab"></div>
-  </section>
+  <div class="page" data-page="effects">
+    <h2>Effects</h2><p>Animated weather over the new tab. Turned off automatically when Windows asks for reduced motion.</p>
+    <h3>Effect</h3>
+    <section>
+      <div class="row"><div class="label">Effect</div><div class="seg" data-key="effect"><button data-v="none">None</button><button data-v="snow">Snow</button><button data-v="rain">Rain</button><button data-v="stars">Stars</button></div></div>
+      <div class="row fx-only"><div class="label">Amount<span>How many flakes, drops or stars. More looks fuller but uses a little more power.</span></div><div class="range"><input type="range" min="10" max="300" step="10" data-key="effect_amount" aria-label="Effect amount"><output></output></div></div>
+    </section>
+  </div>
 
-  <h2>Shortcuts</h2>
-  <section class="keys">
-    <b>New tab</b><span><kbd>Ctrl</kbd> <kbd>T</kbd></span>
-    <b>Close tab</b><span><kbd>Ctrl</kbd> <kbd>W</kbd></span>
-    <b>Next / previous tab</b><span><kbd>Ctrl</kbd> <kbd>Tab</kbd> / <kbd>Ctrl</kbd> <kbd>Shift</kbd> <kbd>Tab</kbd></span>
-    <b>Address bar</b><span><kbd>Ctrl</kbd> <kbd>L</kbd></span>
-    <b>Compact mode</b><span><kbd>Ctrl</kbd> <kbd>Alt</kbd> <kbd>C</kbd></span>
-    <b>Settings</b><span><kbd>Ctrl</kbd> <kbd>,</kbd></span>
-    <b>Pin / unpin Essential</b><span>Right-click a tab / tile</span>
-  </section>
+  <div class="page" data-page="ess">
+    <h2>Essentials</h2><p>Pinned sites in the tab bar and on the new tab page. Right-click a tab to pin it too.</p>
+    <h3>Sites</h3>
+    <section>
+      <div id="esslist"></div>
+      <form class="ess add" id="essadd"><input id="essnew" type="text" placeholder="Add a site, e.g. github.com" aria-label="Add an Essential" spellcheck="false" autocomplete="off"><button class="btn" type="submit">Add</button></form>
+      <div class="err" id="esserr" hidden>That isn't a web address, or the site is already in your Essentials.</div>
+    </section>
+  </div>
 
-  <footer><button class="btn" onclick="send('reset')">Reset to defaults</button></footer>
-</main>
+  <div class="page" data-page="tabs">
+    <h2>Tabs, size and window</h2><p>Where the tabs live, how big everything is and how the window looks.</p>
+    <h3>Tabs</h3>
+    <section>
+      <div class="row"><div class="label">Tab layout<span>Sidebar: tabs in a column at the side. Top bar: tabs in a row above the page, like most browsers.</span></div><div class="seg" data-key="tabs_top"><button data-v="false">Sidebar</button><button data-v="true">Top bar</button></div></div>
+      <div class="row side-only"><div class="label">Sidebar position</div><div class="seg" data-key="sidebar_right"><button data-v="false">Left</button><button data-v="true">Right</button></div></div>
+      <div class="row side-only"><div class="label">Sidebar width<span>Wider shows more of each tab title</span></div><div class="range"><input type="range" min="200" max="360" step="4" data-key="sidebar_width" aria-label="Sidebar width"><output></output></div></div>
+      <div class="row"><div class="label">Compact mode<span>Hides the tabs to give the page all the room. Move the mouse to that edge of the window and they slide back. <kbd>Ctrl</kbd> <kbd>Alt</kbd> <kbd>C</kbd></span></div><input type="checkbox" class="switch" data-key="compact" aria-label="Compact mode"></div>
+      <div class="row"><div class="label">Tab text size<span>Only the text in the tabs and the toolbar</span></div><div class="range"><input type="range" min="12" max="16" data-key="font_size" aria-label="Text size"><output></output></div></div>
+    </section>
+    <h3>Size</h3>
+    <section>
+      <div class="row"><div class="label">Interface size<span>Makes all of Velocity bigger or smaller: tabs, toolbar, new tab and this settings page. Websites aren't affected.</span></div><div class="range"><input type="range" min="80" max="150" step="5" data-key="ui_scale" aria-label="Interface size"><output></output></div></div>
+      <div class="row"><div class="label">Website zoom<span>Default zoom for every website you open</span></div><div class="range"><input type="range" min="50" max="200" step="10" data-key="page_zoom" aria-label="Website zoom"><output></output></div></div>
+    </section>
+    <h3>Window</h3>
+    <section>
+      <div class="row"><div class="label">Window opacity<span>Lower it to see the desktop through Velocity. The whole window turns see-through, websites included.</span></div><div class="range"><input type="range" min="40" max="100" data-key="opacity" aria-label="Window opacity"><output></output></div></div>
+      <div class="row"><div class="label">Page corners<span>How rounded the corners of the website area are</span></div><div class="range"><input type="range" min="0" max="20" data-key="radius" aria-label="Page corner radius"><output></output></div></div>
+      <div class="row"><div class="label">Page spacing<span>Empty space between the website area and the window edge. 0 makes the page touch the edges.</span></div><div class="range"><input type="range" min="0" max="16" data-key="gap" aria-label="Page spacing"><output></output></div></div>
+    </section>
+  </div>
+
+  <div class="page" data-page="search">
+    <h2>Search</h2><p>What happens when you type something that isn't an address.</p>
+    <h3>Search engine</h3>
+    <section><div class="row"><div class="label">Search engine<span>Used when what you type in the address bar or on the new tab isn't a web address</span></div><select id="engine" aria-label="Search engine"></select></div></section>
+  </div>
+
+  <div class="page" data-page="keys">
+    <h2>Shortcuts</h2><p>They work from the tab bar and from any page.</p>
+    <h3>Keyboard</h3>
+    <section class="keys">
+      <b>New tab</b><span><kbd>Ctrl</kbd> <kbd>T</kbd></span>
+      <b>Close tab</b><span><kbd>Ctrl</kbd> <kbd>W</kbd></span>
+      <b>Next / previous tab</b><span><kbd>Ctrl</kbd> <kbd>Tab</kbd> / <kbd>Ctrl</kbd> <kbd>Shift</kbd> <kbd>Tab</kbd></span>
+      <b>Address bar</b><span><kbd>Ctrl</kbd> <kbd>L</kbd></span>
+      <b>Compact mode</b><span><kbd>Ctrl</kbd> <kbd>Alt</kbd> <kbd>C</kbd></span>
+      <b>Settings</b><span><kbd>Ctrl</kbd> <kbd>,</kbd></span>
+      <b>Pin / unpin Essential</b><span>Right-click a tab / tile</span>
+    </section>
+  </div>
+</div>
 <script>
   const send = m => window.ipc.postMessage(m);
   const set = (k, v) => send('set:' + k + '=' + v);
-  const keyOf = { theme: 'theme', tabs_top: 'tabsTop', sidebar_right: 'sidebarRight', sidebar_width: 'sidebarWidth', compact: 'compact', radius: 'radius', gap: 'gap', start_essentials: 'startEssentials', start_clock: 'startClock' };
-  const units = { radius: ' px', gap: ' px', sidebar_width: ' px' };
+  const $ = id => document.getElementById(id);
+  const keyOf = { tabs_top: 'tabsTop', sidebar_right: 'sidebarRight', sidebar_width: 'sidebarWidth', compact: 'compact', radius: 'radius', gap: 'gap',
+    opacity: 'opacity', font_size: 'fontSize', start_essentials: 'startEssentials', start_clock: 'startClock', frame: 'frame', card: 'card', text: 'text', accent: 'accent',
+    clock_style: 'clockStyle', clock_format: 'clockFormat', clock_weight: 'clockWeight', clock_size: 'clockSize', clock_seconds: 'clockSeconds', clock_date: 'clockDate',
+    bg_dim: 'bgDim', bg_blur: 'bgBlur', bg_fit: 'bgFit', nt_order: 'ntOrder', nt_search: 'ntSearch', nt_width: 'ntWidth', effect: 'effect', effect_amount: 'effectAmount',
+    nt_pos: 'ntPos', glass: 'glass', ui_scale: 'uiScale', page_zoom: 'pageZoom' };
+  const units = { radius: ' px', gap: ' px', sidebar_width: ' px', font_size: ' px', opacity: ' %', clock_size: ' px', bg_dim: ' %', bg_blur: ' px', nt_width: ' px', effect_amount: '', ui_scale: ' %', page_zoom: ' %' };
 
-  const engine = document.getElementById('engine');
+  // Category navigation; the last page is remembered for this session only.
+  function go(page) {
+    document.querySelectorAll('.page').forEach(p => p.classList.toggle('on', p.dataset.page === page));
+    document.querySelectorAll('nav [data-go]').forEach(b => b.setAttribute('aria-current', b.dataset.go === page));
+    $('content').scrollTop = 0;
+    try { sessionStorage.page = page; } catch {}
+  }
+  document.querySelectorAll('nav [data-go]').forEach(b => b.onclick = () => go(b.dataset.go));
+  let first = 'look'; try { first = sessionStorage.page || first; } catch {}
+  go(first);
+
+  const lum = h => [1, 3, 5].map(i => parseInt(h.slice(i, i + 2), 16)).reduce((s, v, i) => s + v * [.2126, .7152, .0722][i], 0) / 255;
+  for (const [k, name, f, c, t, a] of PRESETS) {
+    const b = document.createElement('button');
+    b.className = 'theme'; b.dataset.v = k; b.title = name;
+    b.style.cssText = `--f:${f};--c:${c};--t:${t};--a:${a}`;
+    b.innerHTML = '<div class="win"><div class="bar"><b></b><b></b><b></b></div><div class="pg"><b></b></div></div><span><i></i></span>';
+    b.querySelector('span').append(name);
+    b.onclick = () => set('preset', k);
+    $(lum(f) < .5 ? 'dark' : 'light').append(b);
+  }
+  for (const p of ['tl', 'tc', 'tr', 'cl', 'cc', 'cr', 'bl', 'bc', 'br']) {
+    const b = document.createElement('button');
+    b.dataset.v = p; b.title = b.ariaLabel = { t: 'Top', c: 'Middle', b: 'Bottom' }[p[0]] + ' ' + { l: 'left', c: 'centre', r: 'right' }[p[1]];
+    b.onclick = () => set('nt_pos', p);
+    $('pos').append(b);
+  }
+
+  // Called by Rust after a Wallpaper Engine scan; previews come from the mapped workshop folders.
+  function renderWallpapers(list, libraries) {
+    $('wescan').textContent = 'Search again';
+    if (!libraries) { $('we').innerHTML = '<div class="empty">Wallpaper Engine isn\'t installed through Steam on this PC.</div>'; return; }
+    if (!list.length) { $('we').innerHTML = '<div class="empty">No wallpapers yet. Subscribe to some in the Wallpaper Engine Workshop, then search again.</div>'; return; }
+    $('we').replaceChildren(...list.map(w => {
+      const b = document.createElement('button');
+      b.className = 'wp'; b.title = w.title;
+      const box = document.createElement('div');
+      if (w.preview) {
+        const img = document.createElement('img');
+        img.alt = ''; img.loading = 'lazy';
+        img.src = `https://we${w.lib}.velocity.example/${encodeURIComponent(w.id)}/${w.preview.split('/').map(encodeURIComponent).join('/')}`;
+        box.append(img);
+      }
+      const t = document.createElement('span'); t.textContent = w.title;
+      const k = document.createElement('small'); k.textContent = w.kind === 'video' ? 'Video' : 'Preview image';
+      b.append(box, t, k);
+      b.onclick = () => send('bg:we:' + w.lib + ':' + w.id);
+      return b;
+    }));
+  }
+
+  const icon = d => `<svg viewBox="0 0 24 24"><path d="${d}"/></svg>`;
+  let pending = null;
+  function renderEssentials(list) {
+    if (pending) { clearTimeout(pending); pending = null; $('essnew').value = ''; $('esserr').hidden = true; }
+    $('esslist').replaceChildren(...list.map((u, i) => {
+      const row = document.createElement('div');
+      row.className = 'ess';
+      const img = document.createElement('img');
+      img.alt = ''; img.src = new URL(u).origin + '/favicon.ico'; img.onerror = () => img.style.visibility = 'hidden';
+      const input = document.createElement('input');
+      input.type = 'text'; input.value = u; input.spellcheck = false; input.ariaLabel = 'Essential ' + (i + 1);
+      input.onchange = () => input.value.trim() && input.value !== u ? send('ess:edit:' + i + ':' + input.value.trim()) : (input.value = u);
+      input.onkeydown = e => { if (e.key === 'Enter') input.blur(); if (e.key === 'Escape') { input.value = u; input.blur(); } };
+      const btn = (label, d, cmd, off) => { const b = document.createElement('button'); b.className = 'ib'; b.type = 'button'; b.title = b.ariaLabel = label; b.innerHTML = icon(d); b.disabled = off; b.onclick = () => send('ess:' + cmd + ':' + i); return b; };
+      row.append(img, input,
+        btn('Move up', 'M12 19V5M6 11l6-6 6 6', 'up', i === 0),
+        btn('Move down', 'M12 5v14M6 13l6 6 6-6', 'down', i === list.length - 1),
+        btn('Remove', 'M7 7l10 10M17 7L7 17', 'remove', false));
+      return row;
+    }));
+  }
+  // The add form shows an error only when Rust rejects the address (the list doesn't come back).
+  $('essadd').onsubmit = e => {
+    e.preventDefault();
+    const v = $('essnew').value.trim();
+    if (!v) return;
+    pending = setTimeout(() => { pending = null; $('esserr').hidden = false; }, 300);
+    send('ess:add:' + v);
+  };
+  $('essnew').oninput = () => $('esserr').hidden = true;
+  renderEssentials(ESSENTIALS);
+
+  const engine = $('engine');
   for (const [k, name] of ENGINES) engine.add(new Option(name, k));
   engine.onchange = () => set('engine', engine.value);
-
   document.querySelectorAll('.seg').forEach(seg => seg.querySelectorAll('button').forEach(b => b.onclick = () => set(seg.dataset.key, b.dataset.v)));
   document.querySelectorAll('.switch').forEach(c => c.onchange = () => set(c.dataset.key, c.checked));
   document.querySelectorAll('input[type=range]').forEach(r => r.oninput = () => { r.nextElementSibling.value = r.value + units[r.dataset.key]; set(r.dataset.key, r.value); });
+  document.querySelectorAll('input[type=color]').forEach(c => c.oninput = () => { c.previousElementSibling.textContent = c.value; set(c.dataset.key, c.value); });
 
+  let bgShown = null;
   // Called at load and by Rust after every change.
   function applySettings(s) {
-    document.documentElement.dataset.theme = s.theme;
+    window.velocityTheme(s);
     document.querySelectorAll('.seg').forEach(seg => seg.querySelectorAll('button').forEach(b => b.setAttribute('aria-pressed', String(s[keyOf[seg.dataset.key]]) === b.dataset.v)));
+    document.querySelectorAll('.theme').forEach(b => b.setAttribute('aria-pressed', b.dataset.v === s.preset));
+    $('pos').querySelectorAll('button').forEach(b => b.setAttribute('aria-pressed', b.dataset.v === s.ntPos));
+    $('custom').hidden = s.preset !== 'custom';
     document.querySelectorAll('.switch').forEach(c => c.checked = s[keyOf[c.dataset.key]]);
     document.querySelectorAll('input[type=range]').forEach(r => { if (document.activeElement !== r) r.value = s[keyOf[r.dataset.key]]; r.nextElementSibling.value = r.value + units[r.dataset.key]; });
+    document.querySelectorAll('input[type=color]').forEach(c => { if (document.activeElement !== c) c.value = s[keyOf[c.dataset.key]]; c.previousElementSibling.textContent = c.value; });
     document.querySelectorAll('.side-only').forEach(el => el.hidden = s.tabsTop);
+    document.querySelectorAll('.clock-only').forEach(el => el.hidden = !s.startClock);
+    document.querySelectorAll('.digital-only').forEach(el => el.hidden = !s.startClock || s.clockStyle !== 'digital');
+    document.querySelectorAll('.bg-only').forEach(el => el.hidden = !s.bg);
+    document.querySelectorAll('.fx-only').forEach(el => el.hidden = s.effect === 'none');
+    $('bgclear').hidden = !s.bg;
+    const src = s.bg ? `https://bg.velocity.example/${s.bg}?v=${s.bgVer}` : '';
+    if (src !== bgShown) {
+      bgShown = src;
+      const el = !src ? document.createTextNode('No background') : /\.(mp4|webm)$/.test(s.bg)
+        ? Object.assign(document.createElement('video'), { src, autoplay: true, loop: true, muted: true })
+        : Object.assign(document.createElement('img'), { src, alt: '' });
+      $('bgprev').replaceChildren(el);
+    }
     engine.value = s.engine;
   }
   applySettings(VELOCITY);
