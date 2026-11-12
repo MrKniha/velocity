@@ -103,7 +103,7 @@ fn copy_thumb(data: &Path, item: &Path, preview: &str) -> String {
     name
 }
 
-fn copy_dir(src: &Path, dst: &Path, budget: &mut u64) -> std::io::Result<()> {
+pub fn copy_dir(src: &Path, dst: &Path, budget: &mut u64) -> std::io::Result<()> {
     fs::create_dir_all(dst)?;
     for entry in fs::read_dir(src)? {
         let entry = entry?;

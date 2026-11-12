@@ -3,6 +3,7 @@
 
 mod downloads;
 mod history;
+mod import;
 mod icon;
 mod media;
 mod picker;
@@ -25,7 +26,7 @@ use windows::Win32::{
         Gdi::{CreateRoundRectRgn, SetWindowRgn},
     },
     UI::WindowsAndMessaging::{
-        GetWindowLongPtrW, SetLayeredWindowAttributes, SetWindowLongPtrW, SetWindowPos, GWL_EXSTYLE, HWND_TOP,
+        GetWindowLongPtrW, SetLayeredWindowAttributes, SetWindowLongPtrW, SetWindowPos, GWL_EXSTYLE, HWND_BOTTOM, HWND_TOP,
         LWA_ALPHA, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, WS_EX_LAYERED,
     },
 };
@@ -59,6 +60,8 @@ enum UserEvent {
     PagePos(String),
     PageSuggest(u32, String),
     Download(downloads::Update),
+    Fullscreen(u32, bool),
+    Playing(u32, bool),
     BgInstalled(Option<media::Installed>, String),
     NewTab(String),
     UrlChanged(u32, String),
@@ -71,6 +74,7 @@ struct Tab {
     url: String, // empty while the tab shows the new-tab page
     view: WebView,
     unseen: bool, // navigated while in the background; marked until visited
+    pending: Option<String>, // restored from the last session: the page loads only when the tab is opened
 }
 
 struct Browser {
@@ -94,6 +98,8 @@ struct Browser {
     settings_tab: Option<u32>, // id of the tab the settings panel was opened on
     peeking: bool,
     minimized: bool,
+    fullscreen: bool,                         // a page (video) is showing full screen
+    playing: std::collections::HashSet<u32>, // tabs playing audio or video
     top_peek: bool, // sidebar layout: the window-controls strip above the page is shown
     we_dirs: Vec<PathBuf>,
     wallpapers: Vec<media::Wallpaper>,
@@ -125,6 +131,11 @@ impl Browser {
     }
 
     fn open_tab(&mut self, url: &str) {
+        self.add_tab(url, None);
+    }
+
+    /// `restored`: the title of a tab from the last session, which waits with an empty page until it's opened.
+    fn add_tab(&mut self, url: &str, restored: Option<String>) {
         let id = self.next_id;
         self.next_id += 1;
         let (p1, p2, p3, p4) = (self.proxy.clone(), self.proxy.clone(), self.proxy.clone(), self.proxy.clone());
@@ -134,6 +145,8 @@ impl Browser {
         let builder = WebViewBuilder::new_with_web_context(&mut self.ctx);
         let builder = if new_tab {
             builder.with_html(include_str!("pages/newtab.html")).with_background_color(self.settings.card_rgba())
+        } else if restored.is_some() {
+            builder.with_url("about:blank")
         } else {
             builder.with_url(url)
         };
@@ -178,13 +191,19 @@ impl Browser {
         downloads::watch(&view, id, move |u| {
             let _ = p5.send_event(UserEvent::Download(u));
         });
+        watch_media(&view, id, self.proxy.clone());
         if new_tab {
             media::map(&view, media::BG_HOST, &media::bg_dir(&self.dir));
         } else {
             let _ = view.zoom(self.settings.page_zoom as f64 / 100.0);
         }
         let shown_url = if new_tab { String::new() } else { url.to_string() };
-        self.tabs.push(Tab { id, title: "New tab".into(), url: shown_url, view, unseen: false });
+        if let Some(title) = restored {
+            let _ = view.set_visible(false);
+            self.tabs.push(Tab { id, title, url: shown_url, view, unseen: false, pending: Some(url.to_string()) });
+            return;
+        }
+        self.tabs.push(Tab { id, title: "New tab".into(), url: shown_url, view, unseen: false, pending: None });
         self.activate(self.tabs.len() - 1);
         if new_tab {
             let _ = self.current().focus(); // type into the centred search bar straight away
@@ -225,15 +244,31 @@ impl Browser {
     }
 
     fn activate(&mut self, index: usize) {
+        if self.fullscreen {
+            // The full-screen page is going away (closed or switched from): give the window back.
+            self.fullscreen = false;
+            self.window.set_fullscreen(None);
+            self.active = index.min(self.tabs.len() - 1);
+            self.layout();
+        }
         self.active = index;
         self.tabs[index].unseen = false;
+        if let Some(url) = self.tabs[index].pending.take() {
+            let _ = self.tabs[index].view.load_url(&url);
+        }
         // Show the new page before hiding the old one, so the empty frame never flashes in between.
         let _ = self.tabs[index].view.set_visible(true);
+        // Always in front: with window glass the tab UI spans the window underneath, and anything that raised it
+        // (suggestions, compact peek) would otherwise cover a tab that was hidden at the time.
+        bring_to_top(&self.tabs[index].view);
+        memory_target(&self.tabs[index].view, false);
         for (_, t) in self.tabs.iter().enumerate().filter(|(i, _)| *i != index) {
             let _ = t.view.set_visible(false);
+            memory_target(&t.view, true); // background tabs give memory back to Windows
         }
         self.show_settings_if_owner();
         self.sync_ui();
+        self.update_opacity();
     }
 
     /// The settings panel belongs to the tab it was opened on: it shows only while that tab is active.
@@ -291,8 +326,43 @@ impl Browser {
         }
     }
 
+    /// Open tabs for the next start: `active\t<index>`, then `<url>\t<title>` per tab (empty url = new tab page).
+    fn save_session(&self) {
+        let mut text = format!("active\t{}\n", self.active);
+        for t in &self.tabs {
+            let url = t.pending.as_deref().unwrap_or(&t.url);
+            text.push_str(&format!("{}\t{}\n", url.replace(['\t', '\n'], ""), t.title.replace(['\t', '\n'], " ")));
+        }
+        let _ = std::fs::write(self.dir.join("session.tsv"), text);
+    }
+
+    /// Reopen the last session's web pages (empty new tabs aren't kept); returns whether any came back.
+    fn restore_session(&mut self) -> bool {
+        let Ok(text) = std::fs::read_to_string(self.dir.join("session.tsv")) else { return false };
+        let (pages, active) = parse_session(&text);
+        for (url, title) in &pages {
+            self.add_tab(url, Some(title.clone()));
+        }
+        if self.tabs.is_empty() {
+            return false;
+        }
+        self.activate(active.min(self.tabs.len() - 1));
+        true
+    }
+
+    /// Drag and drop in the tab list: move tab `id` to position `to`.
+    fn move_tab(&mut self, id: u32, to: usize) {
+        let Some(from) = self.index_of(id) else { return };
+        let active = self.tabs[self.active].id;
+        let tab = self.tabs.remove(from);
+        self.tabs.insert(to.min(self.tabs.len()), tab);
+        self.active = self.index_of(active).unwrap_or(0);
+        self.sync_ui();
+    }
+
     /// Push the full state to the sidebar; small enough that diffing isn't worth it.
     fn sync_ui(&self) {
+        self.save_session();
         let tabs: Vec<String> = self
             .tabs
             .iter()
@@ -333,10 +403,21 @@ impl Browser {
     }
 
     fn layout(&self) {
+        if self.fullscreen {
+            let (w, h) = logical_size(&self.window);
+            let _ = self.ui.set_visible(false);
+            let view = self.current();
+            let _ = view.set_bounds(rect((0.0, 0.0, w, h)));
+            clear_region(view);
+            bring_to_top(view);
+            return;
+        }
         let _ = self.ui.set_bounds(self.sidebar_bounds());
         let _ = self.ui.set_visible(self.sidebar_shown());
         if self.peeking {
             bring_to_top(&self.ui); // in compact mode the sidebar overlays the page
+        } else {
+            send_to_bottom(&self.ui); // under every page again (it spans the window with window glass)
         }
         let b = self.content_bounds();
         for view in self.tabs.iter().map(|t| &t.view).chain(self.settings_view.as_ref()) {
@@ -610,6 +691,9 @@ impl Browser {
                 return self.show_history("");
             }
             "prof:list" => return self.show_profiles(),
+            "imp:scan" => return self.show_import(),
+            // Windows only lets the user choose the default browser, in its own Settings page.
+            "default" => return drop(std::process::Command::new("explorer").arg("ms-settings:defaultapps?registeredAppUser=Velocity").spawn()),
             "dl:list" => return self.refresh_downloads(),
             "dl:clear" => {
                 self.downloads.clear();
@@ -619,6 +703,9 @@ impl Browser {
         }
         if let Some((cmd, id)) = msg.strip_prefix("dl:").and_then(|m| m.split_once(':')) {
             return self.download_command(cmd, id);
+        }
+        if let Some((id, what)) = msg.strip_prefix("imp:run:").and_then(|m| m.split_once(':')) {
+            return self.run_import(id, what);
         }
         if let Some(q) = msg.strip_prefix("hist:list:") {
             return self.show_history(q);
@@ -638,10 +725,10 @@ impl Browser {
             let known = profiles::list(&self.base).into_iter().find(|n| n == name);
             match (cmd, known) {
                 ("new", _) => match profiles::create(&self.base, name) {
-                    Some(n) => profiles::launch(&n),
+                    Some(n) => profiles::launch(&n, None),
                     None => self.settings_js("profileError('That name is taken or not allowed.')"),
                 },
-                ("open", Some(n)) => profiles::launch(&n),
+                ("open", Some(n)) => profiles::launch(&n, None),
                 ("pic", Some(n)) => {
                     let file = rfd::FileDialog::new()
                         .set_title(format!("Choose a picture for {n}"))
@@ -657,6 +744,13 @@ impl Browser {
                 ("nopic", Some(n)) => {
                     profiles::remove_avatar(&self.base, &n);
                     self.sync_ui();
+                }
+                ("ren", _) => {
+                    // "ren:<old>:<new>"; names never contain ':'.
+                    let (old, new) = name.split_once(':').unwrap_or((name, ""));
+                    if old == self.profile || !profiles::rename(&self.base, old, new) {
+                        self.settings_js("profileError('Couldn\\'t rename it: the name is taken or not allowed, or that profile is open in a window. Close its window first.')");
+                    }
                 }
                 ("del", Some(n)) if n != self.profile => {
                     if !profiles::delete(&self.base, &n) {
@@ -711,6 +805,58 @@ impl Browser {
         self.settings_js(&format!("renderHistory([{}],{})", items.join(","), self.history.entries.len()));
     }
 
+    /// The Import page: other browsers found for this Windows user and what can be brought over from each.
+    fn show_import(&self) {
+        let items: Vec<String> = import::find()
+            .iter()
+            .map(|b| format!("{{id:'{}',name:{},h:{},b:{},c:{}}}", b.id, js_str(b.name), b.has_history(), b.has_bookmarks(), b.has_cookies()))
+            .collect();
+        self.settings_js(&format!("renderImport([{}])", items.join(",")));
+    }
+
+    /// Import from browser `id`; `what` holds h (history), b (bookmarks bar to Essentials), c (Firefox cookies).
+    fn run_import(&mut self, id: &str, what: &str) {
+        let Some(b) = import::find().into_iter().find(|b| b.id == id) else { return };
+        let mut done = Vec::new();
+        let mut failed = Vec::new();
+        if what.contains('h') {
+            match import::history(&b, 5000) {
+                Ok(v) => done.push(format!("{} pages of history", self.history.import(v))),
+                Err(e) => failed.push(format!("history ({e})")),
+            }
+        }
+        if what.contains('b') {
+            match import::bookmarks_bar(&b) {
+                Ok(urls) => {
+                    let before = self.essentials.len();
+                    for u in urls.iter().take(24) {
+                        if self.essentials.len() >= 12 {
+                            break; // Essentials are quick tiles, not a bookmark library
+                        }
+                        edit_essentials(&mut self.essentials, &format!("add:{u}"));
+                    }
+                    let added = self.essentials.len() - before;
+                    if added > 0 {
+                        self.essentials_changed();
+                    }
+                    done.push(format!("{added} Essentials from the bookmarks bar"));
+                }
+                Err(e) => failed.push(format!("bookmarks ({e})")),
+            }
+        }
+        if what.contains('c') && b.has_cookies() {
+            match import::firefox_cookies(&b) {
+                Ok(c) => done.push(format!("{} cookies (sites you were logged in to)", import::add_cookies(&self.ui, &c))),
+                Err(e) => failed.push(format!("cookies ({e})")),
+            }
+        }
+        let mut text = if done.is_empty() { String::new() } else { format!("Imported {}.", done.join(", ")) };
+        if !failed.is_empty() {
+            text = format!("{text} Couldn't import {}.", failed.join(", ")).trim().to_string();
+        }
+        self.settings_js(&format!("importDone({},{})", js_str(id), js_str(&text)));
+    }
+
     fn show_profiles(&self) {
         self.settings_js(&format!("renderProfiles({},{})", profiles_js(&self.base), js_str(&self.profile)));
     }
@@ -732,7 +878,7 @@ impl Browser {
         let (r, g, b) = self.settings.frame_rgb();
         self.window.set_background_color(Some((r, g, b, 255)));
         let _ = self.ui.set_background_color((r, g, b, 255));
-        set_opacity(&self.window, self.settings.opacity);
+        self.update_opacity();
         let card = self.settings.card_rgba();
         for t in self.tabs.iter().filter(|t| t.url.is_empty()).map(|t| &t.view).chain(self.settings_view.as_ref()) {
             let _ = t.set_background_color(card);
@@ -795,6 +941,14 @@ impl Browser {
             ("key", _) => Ok(self.shortcut(arg)),
             ("unpeek", _) => Ok(self.set_peek(false)),
             ("profiles", _) => Ok(self.show_settings_page("profiles")),
+            ("move", _) => {
+                // "move:<id>:<position>"
+                let (id, to) = arg.split_once(':').unwrap_or(("", ""));
+                if let (Ok(id), Ok(to)) = (id.parse(), to.parse()) {
+                    self.move_tab(id, to);
+                }
+                Ok(())
+            }
             ("downloads", _) => Ok(self.open_downloads()),
             ("toppeek", _) => Ok(self.set_top_peek(arg == "1")),
             ("suggest", _) => self.ui.evaluate_script(&self.suggestions_js(arg)),
@@ -847,6 +1001,23 @@ impl Browser {
         // The tab UI spans the window under the page while the strip shows; keep the page in front.
         bring_to_top(self.current());
         self.show_settings_if_owner();
+    }
+
+    /// Window opacity, except while the shown tab plays a video or sound or is full screen: then it's solid.
+    fn update_opacity(&self) {
+        let busy = self.fullscreen || self.tabs.get(self.active).is_some_and(|t| self.playing.contains(&t.id));
+        set_opacity(&self.window, if busy { 100 } else { self.settings.opacity });
+    }
+
+    /// A page asked for full screen (a video's full-screen button) or left it: the whole window becomes that page.
+    fn set_fullscreen(&mut self, id: u32, on: bool) {
+        if id != self.tabs[self.active].id || self.fullscreen == on {
+            return;
+        }
+        self.fullscreen = on;
+        self.window.set_fullscreen(on.then_some(tao::window::Fullscreen::Borderless(None)));
+        self.layout();
+        self.update_opacity();
     }
 
     /// Hiding the page while minimised also pauses it: videos and effects stop, which saves power.
@@ -1032,9 +1203,17 @@ fn host_hwnd(view: &WebView) -> Option<HWND> {
 }
 
 fn bring_to_top(view: &WebView) {
+    restack(view, HWND_TOP);
+}
+
+fn send_to_bottom(view: &WebView) {
+    restack(view, HWND_BOTTOM);
+}
+
+fn restack(view: &WebView, after: HWND) {
     if let Some(hwnd) = host_hwnd(view) {
         unsafe {
-            let _ = SetWindowPos(hwnd, Some(HWND_TOP), 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+            let _ = SetWindowPos(hwnd, Some(after), 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
         }
     }
 }
@@ -1052,6 +1231,77 @@ fn round_corners(view: &WebView, window: &Window, settings: &Settings, bounds: R
         } else {
             let rgn = CreateRoundRectRgn(0, 0, size.width + 1, size.height + 1, d, d);
             SetWindowRgn(hwnd, Some(rgn), true); // the system owns rgn from here on
+        }
+    }
+}
+
+/// Full screen and media events of a tab, which wry doesn't pass on.
+fn watch_media(view: &WebView, id: u32, proxy: EventLoopProxy<UserEvent>) {
+    use webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2_8;
+    use webview2_com::{ContainsFullScreenElementChangedEventHandler, IsDocumentPlayingAudioChangedEventHandler};
+    use windows::core::{Interface, BOOL};
+    let wv = view.webview();
+    let p = proxy.clone();
+    let full = ContainsFullScreenElementChangedEventHandler::create(Box::new(move |w, _| {
+        if let Some(w) = w {
+            let mut on = BOOL(0);
+            unsafe { w.ContainsFullScreenElement(&mut on)? };
+            let _ = p.send_event(UserEvent::Fullscreen(id, on.as_bool()));
+        }
+        Ok(())
+    }));
+    unsafe {
+        let _ = wv.add_ContainsFullScreenElementChanged(&full, &mut 0);
+    }
+    let Ok(wv8) = wv.cast::<ICoreWebView2_8>() else { return };
+    let audio = IsDocumentPlayingAudioChangedEventHandler::create(Box::new(move |w, _| {
+        if let Some(w) = w.and_then(|w| w.cast::<ICoreWebView2_8>().ok()) {
+            let mut on = BOOL(0);
+            unsafe { w.IsDocumentPlayingAudio(&mut on)? };
+            let _ = proxy.send_event(UserEvent::Playing(id, on.as_bool()));
+        }
+        Ok(())
+    }));
+    unsafe {
+        let _ = wv8.add_IsDocumentPlayingAudioChanged(&audio, &mut 0);
+    }
+}
+
+/// The web pages of a saved session and which of them was open (counted among those pages).
+fn parse_session(text: &str) -> (Vec<(String, String)>, usize) {
+    let (mut pages, mut active_line, mut active) = (Vec::new(), usize::MAX, 0);
+    for (i, line) in text.lines().enumerate() {
+        let (a, b) = line.split_once('\t').unwrap_or((line, ""));
+        if a == "active" {
+            active_line = b.parse::<usize>().map_or(usize::MAX, |n| n + 1); // tab lines start after this one
+        } else if a.starts_with("https://") || a.starts_with("http://") {
+            if i <= active_line {
+                active = pages.len(); // the open tab, or the last page before it if it was a new tab page
+            }
+            pages.push((a.to_string(), if b.is_empty() { a.to_string() } else { b.to_string() }));
+        }
+    }
+    (pages, active)
+}
+
+/// Ask WebView2 to keep a hidden tab small (it trims caches and memory) or let a shown one use what it needs.
+fn memory_target(view: &WebView, low: bool) {
+    use webview2_com::Microsoft::Web::WebView2::Win32::{
+        ICoreWebView2_19, COREWEBVIEW2_MEMORY_USAGE_TARGET_LEVEL_LOW, COREWEBVIEW2_MEMORY_USAGE_TARGET_LEVEL_NORMAL,
+    };
+    use windows::core::Interface;
+    if let Ok(wv) = view.webview().cast::<ICoreWebView2_19>() {
+        let level = if low { COREWEBVIEW2_MEMORY_USAGE_TARGET_LEVEL_LOW } else { COREWEBVIEW2_MEMORY_USAGE_TARGET_LEVEL_NORMAL };
+        unsafe {
+            let _ = wv.SetMemoryUsageTargetLevel(level);
+        }
+    }
+}
+
+fn clear_region(view: &WebView) {
+    if let Some(hwnd) = host_hwnd(view) {
+        unsafe {
+            SetWindowRgn(hwnd, None, true);
         }
     }
 }
@@ -1160,14 +1410,35 @@ fn profiles_js(base: &Path) -> String {
     format!("[{}]", items.join(","))
 }
 
+/// Extensions shipped next to velocity.exe (the download bundles uBlock Origin Lite in `extensions\`) are
+/// copied into the data folder the first time; one that is already there is left alone, user changes included.
+fn seed_extensions(bundled: &Path, data: &Path) {
+    let Ok(entries) = std::fs::read_dir(bundled) else { return };
+    for e in entries.flatten().filter(|e| e.path().join("manifest.json").is_file()) {
+        let to = data.join(e.file_name());
+        if !to.exists() && media::copy_dir(&e.path(), &to, &mut u64::MAX.clone()).is_err() {
+            let _ = std::fs::remove_dir_all(&to); // half a copy would load as a broken extension
+        }
+    }
+}
+
+/// `velocity.exe <address>`, as Windows starts the default browser for a link: only web addresses, never files.
+fn start_url() -> Option<String> {
+    std::env::args().skip(1).find(|a| a.starts_with("https://") || a.starts_with("http://"))
+}
+
 fn main() -> wry::Result<()> {
     let base = data_dir();
     std::fs::create_dir_all(base.join("extensions")).ok();
+    if let Some(exe_dir) = std::env::current_exe().ok().and_then(|p| p.parent().map(Path::to_path_buf)) {
+        seed_extensions(&exe_dir.join("extensions"), &base.join("extensions"));
+    }
     // Started without --profile: with more than one profile, ask who's using Velocity first.
     let profile = match profiles::from_args(&base) {
         Some(p) => p,
-        None if profiles::list(&base).len() > 1 => return picker::run(&base),
-        None => profiles::DEFAULT.to_string(),
+        None if profiles::list(&base).len() > 1 => return picker::run(&base, start_url()),
+        // One profile: that one, which isn't Default any more once Default was renamed or deleted.
+        None => profiles::list(&base).remove(0),
     };
     let dir = profiles::dir(&base, &profile);
     let settings = Settings::load(&dir);
@@ -1210,13 +1481,16 @@ fn main() -> wry::Result<()> {
     let essentials = load_essentials(&dir);
     let mut b = Browser {
         window, ui, ctx, base, dir, profile, history, downloads, downloads_unseen: false, close_after: Vec::new(), proxy, tabs: Vec::new(), active: 0, next_id: 1, essentials, settings,
-        settings_view: None, settings_tab: None, peeking: false, minimized: false, top_peek: false, we_dirs: Vec::new(), wallpapers: Vec::new(), arrange_next: false, settings_page: "",
+        settings_view: None, settings_tab: None, peeking: false, minimized: false, fullscreen: false, playing: Default::default(), top_peek: false, we_dirs: Vec::new(), wallpapers: Vec::new(), arrange_next: false, settings_page: "",
     };
-    set_opacity(&b.window, b.settings.opacity);
+    b.update_opacity();
     b.layout();
-    // `velocity.exe <address>` (as the default browser is started) opens it; only web addresses, never files.
-    let start = std::env::args().skip(1).find(|a| a.starts_with("https://") || a.starts_with("http://"));
-    b.open_tab(start.as_deref().unwrap_or(NEW_TAB));
+    let restored = b.restore_session();
+    match start_url() {
+        Some(url) => b.open_tab(&url),
+        None if !restored => b.open_tab(NEW_TAB),
+        None => {}
+    }
 
     event_loop.run(move |event, _, control_flow| {
         *control_flow = ControlFlow::Wait;
@@ -1263,6 +1537,11 @@ fn main() -> wry::Result<()> {
                 }
             }
             Event::UserEvent(UserEvent::Download(u)) => b.download_update(u),
+            Event::UserEvent(UserEvent::Fullscreen(id, on)) => b.set_fullscreen(id, on),
+            Event::UserEvent(UserEvent::Playing(id, on)) => {
+                if on { b.playing.insert(id) } else { b.playing.remove(&id) };
+                b.update_opacity();
+            }
             Event::UserEvent(UserEvent::PageSuggest(id, q)) => {
                 // Only our new tab page gets history; once the tab shows a site, the site could read the reply.
                 if let Some(t) = b.index_of(id).map(|i| &b.tabs[i]).filter(|t| t.url.is_empty()) {
@@ -1375,6 +1654,35 @@ mod tests {
         assert!(!edit_essentials(&mut l, "down:2"), "last can't move down");
         assert!(edit_essentials(&mut l, "remove:1") && l.len() == 2);
         assert!(!edit_essentials(&mut l, "remove:9"));
+    }
+
+    #[test]
+    fn seeding_extensions() {
+        let root = std::env::temp_dir().join("velocity-seed-test");
+        let _ = std::fs::remove_dir_all(&root);
+        let (bundled, data) = (root.join("app"), root.join("data"));
+        std::fs::create_dir_all(bundled.join("ubo/_locales")).unwrap();
+        std::fs::write(bundled.join("ubo/manifest.json"), "{}").unwrap();
+        std::fs::write(bundled.join("ubo/_locales/x.json"), "1").unwrap();
+        std::fs::create_dir_all(bundled.join("not-an-extension")).unwrap();
+        std::fs::create_dir_all(&data).unwrap();
+        seed_extensions(&bundled, &data);
+        assert!(data.join("ubo/_locales/x.json").is_file(), "copied with its folders");
+        assert!(!data.join("not-an-extension").exists(), "only folders with a manifest");
+        std::fs::write(data.join("ubo/manifest.json"), "user").unwrap();
+        seed_extensions(&bundled, &data);
+        assert_eq!(std::fs::read_to_string(data.join("ubo/manifest.json")).unwrap(), "user", "existing ones are kept");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn sessions() {
+        let text = "active\t2\nhttps://a.com/\tA\n\tNew tab\nhttps://b.com/\t\nfile:///x\tX\n";
+        let (pages, active) = parse_session(text);
+        assert_eq!(pages, [("https://a.com/".to_string(), "A".to_string()), ("https://b.com/".into(), "https://b.com/".into())]);
+        assert_eq!(active, 1, "b.com was open; the new tab page before it isn't restored");
+        assert_eq!(parse_session("active\t1\nhttps://a.com/\tA\n\tNew tab\n").1, 0, "an open new tab page falls back to the page before");
+        assert!(parse_session("").0.is_empty());
     }
 
     #[test]

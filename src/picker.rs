@@ -10,7 +10,8 @@ use wry::{WebContext, WebViewBuilder};
 
 use crate::{icon, media, profiles, profiles_js, settings::Settings, THEME_JS};
 
-pub fn run(base: &Path) -> wry::Result<()> {
+/// `url`: the link Velocity was started with, opened in whichever profile is picked.
+pub fn run(base: &Path, url: Option<String>) -> wry::Result<()> {
     let settings = Settings::load(base); // the Default profile's colours
     let (r, g, b) = settings.frame_rgb();
     let event_loop = EventLoopBuilder::<String>::with_user_event().build();
@@ -54,7 +55,7 @@ pub fn run(base: &Path) -> wry::Result<()> {
                 };
                 match chosen {
                     Some(n) => {
-                        profiles::launch(&n);
+                        profiles::launch(&n, url.as_deref());
                         *control_flow = ControlFlow::Exit;
                     }
                     None if cmd == "new" => {

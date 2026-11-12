@@ -8,6 +8,29 @@ use std::path::{Path, PathBuf};
 
 pub const DEFAULT: &str = "Default";
 
+/// What belongs to the Default profile inside the data folder (the rest there is shared: extensions, pictures,
+/// other profiles). Renaming Default moves these into its new folder; deleting it removes them.
+const DEFAULT_ITEMS: &[&str] = &["settings.ini", "essentials.txt", "history.tsv", "downloads.tsv", "session.tsv", "background", "profile"];
+
+fn default_exists(base: &Path) -> bool {
+    DEFAULT_ITEMS.iter().any(|i| base.join(i).exists())
+}
+
+/// Move the Default profile's items to `to`, all or nothing (a running Default holds its files open).
+fn move_default(base: &Path, to: &Path) -> bool {
+    let mut moved = Vec::new();
+    for item in DEFAULT_ITEMS.iter().filter(|i| base.join(i).exists()) {
+        if fs::rename(base.join(item), to.join(item)).is_err() {
+            for back in moved {
+                let _ = fs::rename(to.join(back), base.join(back));
+            }
+            return false;
+        }
+        moved.push(*item);
+    }
+    true
+}
+
 /// A name the user typed, if it can be a folder name on Windows: 1-32 letters, digits, spaces, - and _.
 pub fn valid_name(name: &str) -> Option<String> {
     let name = name.trim();
@@ -24,7 +47,7 @@ pub fn dir(base: &Path, name: &str) -> PathBuf {
     if name.eq_ignore_ascii_case(DEFAULT) { base.to_path_buf() } else { base.join("profiles").join(name) }
 }
 
-/// "Default" first, then the others alphabetically.
+/// "Default" first (unless it was deleted or renamed and other profiles exist), then the others alphabetically.
 pub fn list(base: &Path) -> Vec<String> {
     let mut names: Vec<String> = fs::read_dir(base.join("profiles"))
         .into_iter()
@@ -35,14 +58,16 @@ pub fn list(base: &Path) -> Vec<String> {
         .filter(|n| !n.eq_ignore_ascii_case(DEFAULT))
         .collect();
     names.sort_by_key(|n| n.to_lowercase());
-    names.insert(0, DEFAULT.to_string());
+    if names.is_empty() || default_exists(base) {
+        names.insert(0, DEFAULT.to_string());
+    }
     names
 }
 
 /// Create a new, empty profile; None if the name is invalid or taken.
 pub fn create(base: &Path, name: &str) -> Option<String> {
     let name = valid_name(name)?;
-    let taken = list(base).iter().any(|n| n.eq_ignore_ascii_case(&name));
+    let taken = list(base).iter().any(|n| n.eq_ignore_ascii_case(&name)) || name.eq_ignore_ascii_case(DEFAULT);
     if taken {
         return None;
     }
@@ -50,15 +75,46 @@ pub fn create(base: &Path, name: &str) -> Option<String> {
     Some(name)
 }
 
+/// Give a profile a new name (Default too: its files move into a folder of their own). Fails, changing nothing,
+/// while the profile is open somewhere, or when the name is invalid or taken.
+pub fn rename(base: &Path, old: &str, new: &str) -> bool {
+    let Some(new) = valid_name(new) else { return false };
+    let known = list(base).into_iter().any(|n| n == old);
+    let taken = list(base).iter().any(|n| n.eq_ignore_ascii_case(&new)) || new.eq_ignore_ascii_case(DEFAULT);
+    if !known || taken {
+        return false;
+    }
+    let to = dir(base, &new);
+    let ok = if old == DEFAULT {
+        fs::create_dir_all(&to).is_ok() && (move_default(base, &to) || fs::remove_dir(&to).is_err() && false)
+    } else {
+        fs::rename(dir(base, old), &to).is_ok()
+    };
+    if ok {
+        if let Some(pic) = avatar_file(base, old) {
+            let ext = pic.extension().and_then(|e| e.to_str()).unwrap_or("png").to_string();
+            let _ = fs::rename(pic, avatars_dir(base).join(format!("{new}.{ext}")));
+        }
+    }
+    ok
+}
+
 /// Delete a profile and all its data. Fails while the profile is open somewhere (WebView2 holds its files),
 /// in which case nothing is deleted: the folder is moved aside first, which Windows refuses while files are in use.
 pub fn delete(base: &Path, name: &str) -> bool {
-    let Some(name) = valid_name(name).filter(|n| !n.eq_ignore_ascii_case(DEFAULT)) else { return false };
-    let from = dir(base, &name);
+    let Some(name) = valid_name(name) else { return false };
     let trash = base.join(format!("deleting-{name}"));
     let _ = fs::remove_dir_all(&trash); // left over from an earlier delete that was interrupted
-    if !from.is_dir() || fs::rename(&from, &trash).is_err() {
-        return false;
+    if name.eq_ignore_ascii_case(DEFAULT) {
+        // Only Default's own files; the data folder also holds what all profiles share.
+        if !default_exists(base) || fs::create_dir_all(&trash).is_err() || !move_default(base, &trash) {
+            return false;
+        }
+    } else {
+        let from = dir(base, &name);
+        if !from.is_dir() || fs::rename(&from, &trash).is_err() {
+            return false;
+        }
     }
     let _ = fs::remove_dir_all(&trash);
     remove_avatar(base, &name);
@@ -118,10 +174,15 @@ pub fn remove_avatar(base: &Path, name: &str) {
     }
 }
 
-/// Open a profile in a new window.
-pub fn launch(name: &str) {
+/// Open a profile in a new window, optionally at a web address (a link Windows handed to Velocity).
+pub fn launch(name: &str, url: Option<&str>) {
     if let Ok(exe) = std::env::current_exe() {
-        let _ = std::process::Command::new(exe).arg("--profile").arg(name).spawn();
+        let mut cmd = std::process::Command::new(exe);
+        cmd.arg("--profile").arg(name);
+        if let Some(url) = url {
+            cmd.arg(url);
+        }
+        let _ = cmd.spawn();
     }
 }
 
@@ -152,6 +213,8 @@ mod tests {
         let base = std::env::temp_dir().join("velocity-profiles-test");
         let _ = fs::remove_dir_all(&base);
         fs::create_dir_all(&base).unwrap();
+        assert_eq!(list(&base), ["Default"], "a fresh install has just Default");
+        fs::write(base.join("history.tsv"), "").unwrap(); // Default has been used
         assert_eq!(create(&base, "Work"), Some("Work".into()));
         assert_eq!(create(&base, "work"), None, "names are case-insensitive");
         assert_eq!(create(&base, "default"), None);
@@ -171,8 +234,33 @@ mod tests {
         assert!(!set_avatar(&base, "Work", &base.join("settings.ini")), "only images");
         assert!(delete(&base, "Work"));
         assert!(avatar(&base, "Work").is_empty(), "deleting a profile removes its picture");
-        assert!(!delete(&base, "Default"));
-        assert_eq!(list(&base), ["Default", "Alpha"]);
+        assert_eq!(list(&base), ["Default", "Alpha"], "Default is listed while it has data");
+        let _ = fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn rename_and_delete_default() {
+        let base = std::env::temp_dir().join("velocity-profiles-default-test");
+        let _ = fs::remove_dir_all(&base);
+        fs::create_dir_all(base.join("profile/EBWebView")).unwrap();
+        fs::write(base.join("settings.ini"), "tabs_top=true").unwrap();
+        fs::create_dir_all(base.join("extensions/ubo")).unwrap();
+        create(&base, "Work").unwrap();
+        assert!(!rename(&base, "Default", "work"), "taken (case-insensitive)");
+        assert!(!rename(&base, "Default", "a/b"), "invalid");
+        assert!(rename(&base, "Default", "Home"));
+        assert_eq!(fs::read_to_string(base.join("profiles/Home/settings.ini")).unwrap(), "tabs_top=true", "Default's files moved");
+        assert!(base.join("profiles/Home/profile/EBWebView").is_dir());
+        assert!(base.join("extensions/ubo").is_dir(), "shared things stay");
+        assert_eq!(list(&base), ["Home", "Work"], "an empty Default isn't listed next to other profiles");
+        assert!(rename(&base, "Work", "Job"));
+        assert_eq!(list(&base), ["Home", "Job"]);
+
+        fs::write(base.join("history.tsv"), "x").unwrap(); // Default used again
+        assert_eq!(list(&base)[0], "Default");
+        assert!(delete(&base, "Default"));
+        assert!(!base.join("history.tsv").exists() && base.join("extensions/ubo").is_dir(), "only Default's own files go");
+        assert_eq!(list(&base), ["Home", "Job"]);
         let _ = fs::remove_dir_all(&base);
     }
 }

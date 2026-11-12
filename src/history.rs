@@ -83,6 +83,26 @@ impl History {
         self.save();
     }
 
+    /// Add visits from another browser (any order); the newest visit per address wins. Returns how many were new.
+    pub fn import(&mut self, visits: Vec<(u64, String, String)>) -> usize {
+        let before = self.entries.len();
+        for (ts, url, title) in visits {
+            if !(url.starts_with("http://") || url.starts_with("https://")) {
+                continue;
+            }
+            let e = Entry { ts, url: clean(&url, 2048), title: clean(&title, 300) };
+            match self.entries.iter_mut().find(|x| x.url == e.url) {
+                Some(x) if x.ts < e.ts => *x = e,
+                Some(_) => {}
+                None => self.entries.push(e),
+            }
+        }
+        self.entries.sort_by(|a, b| b.ts.cmp(&a.ts));
+        self.entries.truncate(LIMIT);
+        self.save();
+        self.entries.len().saturating_sub(before)
+    }
+
     pub fn clear(&mut self) {
         self.entries.clear();
         self.save();
@@ -145,6 +165,15 @@ mod tests {
         assert!(h.suggest("  ", 5).is_empty());
 
         let mut h = h;
+        let added = h.import(vec![
+            (5, "https://www.rust-lang.org/".into(), "older visit".into()),
+            (9_999_999_999, "https://imported.example/".into(), "Imported".into()),
+            (1, "file:///C:/x.html".into(), "local".into()),
+        ]);
+        assert_eq!(added, 1, "a known page isn't added twice, files are skipped");
+        assert_eq!(h.entries[0].url, "https://imported.example/", "sorted newest first");
+        assert_ne!(h.entries.iter().find(|e| e.url == "https://www.rust-lang.org/").unwrap().title, "older visit");
+        h.remove("https://imported.example/");
         h.remove("https://github.com/rust-lang/rust");
         assert_eq!(History::load(&dir).entries.len(), 1);
         h.clear();

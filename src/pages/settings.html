@@ -178,6 +178,7 @@
   <button data-go="search"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5"/><path d="M20 20l-4.2-4.2"/></svg>Search</button>
   <button data-go="downloads"><svg viewBox="0 0 24 24"><path d="M12 4v11M7.5 10.5L12 15l4.5-4.5M5 19h14"/></svg>Downloads</button>
   <button data-go="history"><svg viewBox="0 0 24 24"><path d="M4 12a8 8 0 1 0 2.3-5.7M4 4v4h4"/><path d="M12 8v4l3 2"/></svg>History</button>
+  <button data-go="import"><svg viewBox="0 0 24 24"><path d="M12 4v10M8 10l4 4 4-4M4 15v4h16v-4"/></svg>Import and default</button>
   <button data-go="profiles"><svg viewBox="0 0 24 24"><circle cx="12" cy="8.5" r="3.5"/><path d="M5 20c.8-3.6 3.6-5.5 7-5.5s6.2 1.9 7 5.5"/></svg>Profiles</button>
   <button data-go="keys"><svg viewBox="0 0 24 24"><rect x="3" y="6.5" width="18" height="11" rx="2"/><path d="M7 10.5h.01M11 10.5h.01M15 10.5h.01M8 14h8"/></svg>Shortcuts</button>
   <span class="spacer"></span>
@@ -365,6 +366,17 @@
     </section>
   </div>
 
+  <div class="page" data-page="import">
+    <h2>Import and default browser</h2><p>Bring your history and favourite sites over from another browser, and open links with Velocity.</p>
+    <h3>Default browser</h3>
+    <section>
+      <div class="row"><div class="label">Open links with Velocity<span>Windows lets you choose the default browser only in its own Settings. This opens that page: pick Velocity for web links. Needs Velocity installed with its setup.</span></div><button class="btn" onclick="send('default')">Open Windows Settings</button></div>
+    </section>
+    <h3>Import</h3>
+    <section id="implist"></section>
+    <p style="margin-top:10px;font-size:12px">Bookmarks-bar sites become Essentials (up to 12). Cookies keep you logged in to sites and can only be brought over from Firefox: Chrome, Edge, Brave and other Chromium browsers lock their cookies and passwords so that only they can read them. If a browser is open, close it first.</p>
+  </div>
+
   <div class="page" data-page="keys">
     <h2>Shortcuts</h2><p>They work from the tab bar and from any page.</p>
     <h3>Keyboard</h3>
@@ -404,6 +416,7 @@
     if (page === 'history') send('hist:list:' + $('histfind').value.trim());
     if (page === 'profiles') send('prof:list');
     if (page === 'downloads') send('dl:list');
+    if (page === 'import') send('imp:scan');
   }
   document.querySelectorAll('nav [data-go]').forEach(b => b.onclick = () => go(b.dataset.go));
   let first = 'look'; try { first = sessionStorage.page || first; } catch {}
@@ -568,6 +581,46 @@
     return 'Used ' + new Date(t * 1000).toLocaleDateString(undefined, { day: 'numeric', month: 'short' });
   };
 
+  // Import: Rust lists the browsers it found ({id, name, h: has history, b: has bookmarks, c: has cookies}).
+  function renderImport(list) {
+    if (!list.length) { $('implist').innerHTML = '<div class="empty" style="padding:14px 16px">No other browsers found for this Windows user.</div>'; return; }
+    $('implist').replaceChildren(...list.map(b => {
+      const row = document.createElement('div');
+      row.className = 'stack'; row.dataset.id = b.id;
+      const head = document.createElement('div');
+      head.style.cssText = 'display:flex;align-items:center;gap:12px';
+      const name = document.createElement('div'); name.className = 'label'; name.textContent = b.name;
+      const go = document.createElement('button'); go.className = 'btn'; go.textContent = 'Import';
+      head.append(name, go);
+      const opts = document.createElement('div');
+      opts.style.cssText = 'display:flex;flex-wrap:wrap;gap:16px;margin-top:10px;color:var(--muted-card)';
+      const opt = (key, label, on) => {
+        const l = document.createElement('label'); l.style.cssText = 'display:flex;align-items:center;gap:8px';
+        const c = document.createElement('input'); c.type = 'checkbox'; c.className = 'switch'; c.dataset.k = key; c.checked = on; c.disabled = !on;
+        l.append(c, label); return l;
+      };
+      opts.append(opt('h', 'History', b.h), opt('b', 'Bookmarks bar', b.b));
+      if (b.c) opts.append(opt('c', 'Cookies (stay logged in)', true));
+      const out = document.createElement('div'); out.className = 'label'; out.style.marginTop = '8px';
+      out.innerHTML = '<span></span>';
+      go.onclick = () => {
+        const what = [...opts.querySelectorAll('input:checked')].map(c => c.dataset.k).join('');
+        if (!what) return;
+        go.disabled = true; go.textContent = 'Importing…';
+        out.firstChild.textContent = '';
+        send(`imp:run:${b.id}:${what}`);
+      };
+      row.append(head, opts, out);
+      return row;
+    }));
+  }
+  function importDone(id, text) {
+    const row = $('implist').querySelector(`[data-id="${id}"]`);
+    if (!row) return;
+    const go = row.querySelector('.btn'); go.disabled = false; go.textContent = 'Import';
+    row.querySelector('.label span').textContent = text;
+  }
+
   // Profiles: Rust sends every profile ({n: name, a: picture file or '', t: last use}) and the one this window runs.
   let profPending = false;
   function renderProfiles(list, current) {
@@ -601,13 +654,17 @@
       if (n !== current) {
         const open = document.createElement('button'); open.className = 'btn'; open.textContent = 'Open';
         open.onclick = () => send('prof:open:' + n);
-        row.append(open);
-        if (n !== 'Default') {
-          const del = document.createElement('button');
-          del.className = 'ib'; del.title = del.ariaLabel = 'Delete ' + n; del.innerHTML = icon('M5 7h14M10 7V5h4v2M7 7l1 12h8l1-12');
-          del.onclick = () => { if (confirm(`Delete the profile "${n}" with its settings, history, cookies and logins? This can't be undone.`)) send('prof:del:' + n); };
-          row.append(del);
-        }
+        // A profile can only be renamed or deleted while no window has it open (its files are in use then).
+        const ren = document.createElement('button');
+        ren.className = 'ib'; ren.title = ren.ariaLabel = 'Rename ' + n; ren.innerHTML = icon('M4 20h4L19 9l-4-4L4 16zM13.5 6.5l4 4');
+        ren.onclick = () => {
+          const to = prompt(`New name for "${n}"`, n);
+          if (to && to.trim() && to.trim() !== n) send(`prof:ren:${n}:${to.trim()}`);
+        };
+        const del = document.createElement('button');
+        del.className = 'ib'; del.title = del.ariaLabel = 'Delete ' + n; del.innerHTML = icon('M5 7h14M10 7V5h4v2M7 7l1 12h8l1-12');
+        del.onclick = () => { if (confirm(`Delete the profile "${n}" with its settings, history, cookies and logins? This can't be undone.`)) send('prof:del:' + n); };
+        row.append(open, ren, del);
       }
       return row;
     }));
@@ -659,7 +716,14 @@
   engine.onchange = () => set('engine', engine.value);
   document.querySelectorAll('.seg').forEach(seg => seg.querySelectorAll('button').forEach(b => b.onclick = () => set(seg.dataset.key, b.dataset.v)));
   document.querySelectorAll('.switch').forEach(c => c.onchange = () => set(c.dataset.key, c.checked));
-  document.querySelectorAll('input[type=range]').forEach(r => r.oninput = () => { r.nextElementSibling.value = r.value + units[r.dataset.key]; set(r.dataset.key, r.value); });
+  // These move or zoom this very panel: applied live, the slider would slip away under the mouse and run off,
+  // so while dragging they only show the value and apply it on release.
+  const onRelease = ['sidebar_width', 'ui_scale', 'gap'];
+  document.querySelectorAll('input[type=range]').forEach(r => {
+    const show = () => r.nextElementSibling.value = r.value + units[r.dataset.key];
+    if (onRelease.includes(r.dataset.key)) { r.oninput = show; r.onchange = () => { show(); set(r.dataset.key, r.value); }; }
+    else r.oninput = () => { show(); set(r.dataset.key, r.value); };
+  });
   document.querySelectorAll('input[type=color]').forEach(c => c.oninput = () => { c.previousElementSibling.textContent = c.value; set(c.dataset.key, c.value); });
 
   // Called by Rust while a background file is being copied (failed = the copy didn't work).

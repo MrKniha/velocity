@@ -1,11 +1,16 @@
-﻿[package]
+[package]
 name = "velocity"
 version = "0.1.0"
 edition = "2024"
 
 [dependencies]
 rfd = "0.17.2"
+rusqlite = { version = "0.37", features = ["bundled"] }
+serde_json = "1"
 tao = "0.37.2"
 webview2-com = "0.39"
 windows = { version = "0.62", features = ["Win32_Foundation", "Win32_Graphics_Dwm", "Win32_Graphics_Gdi", "Win32_UI_WindowsAndMessaging", "Win32_System_Registry"], default-features = false }
 wry = { version = "0.57.1", features = ["devtools"] }
+
+[build-dependencies]
+embed-resource = "3"

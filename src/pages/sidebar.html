@@ -97,6 +97,7 @@
   .tab:hover { color: var(--text); background: var(--hover); }
   .tab.active { color: var(--text); background: var(--active); font-weight: 500; box-shadow: 0 1px 2px rgb(0 0 0 / .18), inset 0 0 0 1px var(--hair); }
   .tab:active { transform: scale(.985); }
+  .tab.dragging { opacity: .6; transform: none; }
   .tab .mark[hidden] { display: none; }
   @media (prefers-reduced-motion: reduce) { .tab { transition: none; } }
   .tab img, .tab .blank { width: 16px; height: 16px; flex: none; }
@@ -328,7 +329,8 @@
       updateTab(li, t, t.id === active);
       return li;
     });
-    if (next.length !== list.children.length || next.some((li, i) => list.children[i] !== li)) list.replaceChildren(...next);
+    const moved = next.length !== list.children.length || next.some((li, i) => list.children[i] !== li);
+    if (moved && !drag?.moved) list.replaceChildren(...next); // not while a tab is being dragged
     if (active !== lastActive) {
       lastActive = active;
       list.querySelector('.tab.active')?.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'smooth' });
@@ -354,7 +356,7 @@
     x.ariaLabel = 'Close tab';
     x.innerHTML = '<svg viewBox="0 0 24 24"><path d="M7 7l10 10M17 7L7 17"/></svg>';
     x.onclick = e => { e.stopPropagation(); send('close:' + id); };
-    li.onclick = () => send('select:' + id);
+    li.onclick = () => { if (li.dataset.dragged) delete li.dataset.dragged; else send('select:' + id); };
     li.onkeydown = e => { if (e.key === 'Enter') send('select:' + id); };
     li.onauxclick = e => { if (e.button === 1) send('close:' + id); };
     li.oncontextmenu = e => { e.preventDefault(); if (li.dataset.url) send('pin:' + id); };
@@ -382,6 +384,39 @@
 
   // Any empty spot of the tab bar moves the window (in the sidebar that is most of it, not just the strip
   // next to the window buttons); double-clicking one maximises.
+  // Drag a tab to another place in the list (after 5 px, so a click stays a click); Rust gets the new position.
+  let drag = null;
+  list.addEventListener('pointerdown', e => {
+    const li = e.target.closest('.tab');
+    if (!li || e.button !== 0 || e.target.closest('.x')) return;
+    delete li.dataset.dragged;
+    drag = { li, x: e.clientX, y: e.clientY, moved: false };
+  });
+  addEventListener('pointermove', e => {
+    if (!drag) return;
+    if (!drag.moved) {
+      if (Math.hypot(e.clientX - drag.x, e.clientY - drag.y) < 5) return;
+      drag.moved = true;
+      drag.li.classList.add('dragging');
+    }
+    const across = document.documentElement.dataset.layout === 'top';
+    const before = [...list.children].find(li => {
+      if (li === drag.li) return false;
+      const r = li.getBoundingClientRect();
+      return across ? e.clientX < r.left + r.width / 2 : e.clientY < r.top + r.height / 2;
+    });
+    if (before !== drag.li.nextElementSibling) list.insertBefore(drag.li, before || null);
+  });
+  addEventListener('pointerup', () => {
+    if (!drag) return;
+    if (drag.moved) {
+      drag.li.classList.remove('dragging');
+      drag.li.dataset.dragged = 1; // the click that follows isn't a "select"
+      send(`move:${drag.li.dataset.id}:${[...list.children].indexOf(drag.li)}`);
+    }
+    drag = null;
+  });
+
   const blank = t => t === document.body || t === document.documentElement || ['drag', 'tabs', 'foot', 'nav', 'win', 'essentials', 'br', 'topstrip'].includes(t.id) || t.classList.contains('spacer');
   addEventListener('mousedown', e => { if (e.button === 0 && e.detail === 1 && blank(e.target)) send('drag'); });
   addEventListener('dblclick', e => { if (blank(e.target)) send('win:max'); });

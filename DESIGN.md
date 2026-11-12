@@ -50,7 +50,7 @@ Chrome: none; hovers and state changes switch instantly. New tab only: optional 
 
 ## Settings page
 
-Left category navigation (Appearance, New tab, Clock, Effects, Essentials, Tabs and window, Search, History, Profiles, Shortcuts) with one category shown at a time; it collapses to a horizontal strip under 720px.
+Left category navigation (Appearance, New tab, Clock, Effects, Essentials, Tabs and window, Search, Downloads, History, Import and default, Profiles, Shortcuts) with one category shown at a time; it collapses to a horizontal strip under 720px.
 
 Lists (Essentials, History, Profiles) share one row: 16px left padding, 16px icon or 36px avatar, title with a muted second line, then `.btn` actions and 28px `.ib` icon buttons on the right; rows are split by `--hair` lines. Search fields over a list are 32px, 8px radius, `--field`.
 
