@@ -251,6 +251,18 @@ impl Engine {
         added
     }
 
+    /// Answer the "save as" question for download `id` (Velocity's id): whether it was the
+    /// engine's. `choice`: the file, or None to cancel.
+    pub fn answer_download(&self, id: u32, choice: Option<std::path::PathBuf>) -> bool {
+        let mut downloads = self.downloads.lock().unwrap();
+        let Some((&engine_id, _)) = downloads.iter().find(|(_, v)| **v == id) else { return false };
+        if choice.is_none() {
+            downloads.remove(&engine_id);
+        }
+        net::download::answer(engine_id, choice);
+        true
+    }
+
     /// Cancel download `id` (Velocity's id) if the engine runs it.
     pub fn cancel_download(&self, id: u32) {
         let downloads = self.downloads.lock().unwrap();
@@ -519,6 +531,11 @@ fn follow_downloads(proxy: EventLoopProxy<UserEvent>, ids: Arc<Mutex<HashMap<u64
                 ids.insert(id, ours);
                 // No tab: the engine's download page stays in the tab that asked for the file.
                 Update::Started { id: ours, tab: 0, url, path: path.display().to_string(), total: size(total) }
+            }
+            DownloadEvent::Ask { id, url, path, total } => {
+                let ours = crate::downloads::next_id();
+                ids.insert(id, ours);
+                Update::Ask { id: ours, tab: 0, url, path: path.display().to_string(), total: size(total) }
             }
             DownloadEvent::Progress { id, received, total } => {
                 let Some(&ours) = ids.get(&id) else { return };

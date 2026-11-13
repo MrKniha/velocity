@@ -560,7 +560,12 @@ impl Browser {
                     dialog = dialog.set_file_name(name);
                 }
                 let choice = dialog.save_file();
-                if downloads::answer(id, choice.as_deref()) {
+                // The question came from the engine's network layer, or from WebView2.
+                let go = match self.engine.as_ref() {
+                    Some(engine) if engine.answer_download(id, choice.clone()) => choice.is_some(),
+                    _ => downloads::answer(id, choice.as_deref()),
+                };
+                if go {
                     let path = choice.map(|p| p.to_string_lossy().into_owned()).unwrap_or(path);
                     return self.download_update(Update::Started { id, tab, url, path, total });
                 }
