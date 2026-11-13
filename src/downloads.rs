@@ -152,6 +152,11 @@ pub fn watch(view: &WebView, tab: u32, send: impl Fn(Update) + Clone + 'static) 
     }
 }
 
+/// An id for a download that didn't come from WebView2 (the engine's), from the same counter.
+pub fn next_id() -> u32 {
+    NEXT.fetch_add(1, Ordering::Relaxed)
+}
+
 pub fn cancel(id: u32) {
     if let Some(op) = RUNNING.with(|r| r.borrow().get(&id).cloned()) {
         unsafe {
