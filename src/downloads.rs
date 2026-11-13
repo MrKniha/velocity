@@ -33,6 +33,7 @@ thread_local! {
 /// Whether new downloads ask where to save the file.
 pub fn set_ask(ask: bool) {
     ASK.with(|a| a.set(ask));
+    net::download::set_ask(ask); // the engine's downloads too
 }
 
 /// Answer a download that is waiting for a place to save: `Some(path)` saves it there, `None` cancels it.
