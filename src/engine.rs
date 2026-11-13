@@ -10,6 +10,7 @@ use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::path::Path;
 use std::rc::Rc;
+use std::sync::{Arc, Mutex};
 
 use euclid::{Point2D, Rect, Scale, Size2D};
 use servo::{
@@ -81,6 +82,8 @@ struct Inner {
 
 pub struct Engine {
     servo: Servo,
+    /// Downloads running in the engine: its id to the id in Velocity's downloads list.
+    downloads: Arc<Mutex<HashMap<u64, u32>>>,
     inner: Rc<Inner>,
     pages: HashMap<u32, Page>,
     active: Option<u32>,
@@ -98,6 +101,8 @@ impl Engine {
         let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
         // Loads in the background; the network layer blocks nothing until it is ready.
         net::content_blocker::load(ad_rules.to_path_buf());
+        let downloads = Arc::new(Mutex::new(HashMap::new()));
+        follow_downloads(proxy.clone(), downloads.clone());
         let window = WindowBuilder::new()
             .with_parent_window(parent.hwnd())
             .with_decorations(false)
@@ -136,7 +141,7 @@ impl Engine {
         });
         let delegate: Rc<dyn WebViewDelegate> = Rc::new(Delegate(Rc::downgrade(&inner)));
         *inner.delegate.borrow_mut() = Some(delegate);
-        Engine { servo, inner, pages: HashMap::new(), active: None, cursor: Cell::new(DevicePoint::default()), modifiers: Cell::new(Modifiers::empty()) }
+        Engine { servo, downloads, inner, pages: HashMap::new(), active: None, cursor: Cell::new(DevicePoint::default()), modifiers: Cell::new(Modifiers::empty()) }
     }
 
     pub fn window_id(&self) -> WindowId {
@@ -244,6 +249,14 @@ impl Engine {
             added += 1;
         }
         added
+    }
+
+    /// Cancel download `id` (Velocity's id) if the engine runs it.
+    pub fn cancel_download(&self, id: u32) {
+        let downloads = self.downloads.lock().unwrap();
+        if let Some((&engine_id, _)) = downloads.iter().find(|(_, v)| **v == id) {
+            net::download::cancel(engine_id);
+        }
     }
 
     pub fn exit_fullscreen(&self) {
@@ -490,6 +503,35 @@ fn engine_cookie(c: &crate::import::Cookie, now: f64) -> Option<cookie::Cookie<'
         builder = builder.domain(domain.to_string());
     }
     Some(builder.build())
+}
+
+/// Downloads on the engine (saved by its network layer) go into Velocity's downloads list, as
+/// WebView2's do. Called on the network layer's threads.
+fn follow_downloads(proxy: EventLoopProxy<UserEvent>, ids: Arc<Mutex<HashMap<u64, u32>>>) {
+    use crate::downloads::Update;
+    use net::download::DownloadEvent;
+    let size = |total: Option<u64>| total.map_or(-1, |t| t as i64);
+    net::download::set_observer(move |event| {
+        let mut ids = ids.lock().unwrap();
+        let update = match event {
+            DownloadEvent::Started { id, url, path, total } => {
+                let ours = crate::downloads::next_id();
+                ids.insert(id, ours);
+                // No tab: the engine's download page stays in the tab that asked for the file.
+                Update::Started { id: ours, tab: 0, url, path: path.display().to_string(), total: size(total) }
+            }
+            DownloadEvent::Progress { id, received, total } => {
+                let Some(&ours) = ids.get(&id) else { return };
+                Update::Progress { id: ours, received: received as i64, total: size(total) }
+            }
+            DownloadEvent::Finished { id, result } => {
+                let Some(ours) = ids.remove(&id) else { return };
+                let path = result.as_ref().map(|p| p.display().to_string()).unwrap_or_default();
+                Update::Finished { id: ours, ok: result.is_ok(), path }
+            }
+        };
+        let _ = proxy.send_event(UserEvent::Download(update));
+    });
 }
 
 #[derive(Clone)]

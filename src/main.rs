@@ -628,7 +628,12 @@ impl Browser {
         match cmd {
             "open" if done => drop(std::process::Command::new("explorer").arg(&item.path).spawn()),
             "show" if done => drop(std::process::Command::new("explorer").raw_arg(format!("/select,\"{}\"", item.path)).spawn()),
-            "cancel" => downloads::cancel(item.id),
+            "cancel" => {
+                downloads::cancel(item.id);
+                if let Some(engine) = &self.engine {
+                    engine.cancel_download(item.id);
+                }
+            }
             "remove" => self.downloads.remove(item.id),
             "retry" if item.url.starts_with("http") => self.open_tab(&item.url),
             _ => {}
