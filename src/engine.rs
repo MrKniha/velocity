@@ -15,9 +15,38 @@ use euclid::{Point2D, Rect, Scale, Size2D};
 use servo::{
     Code, ConsoleLogLevel, CreateNewWebViewRequest, Cursor, DevicePoint, EventLoopWaker, InputEvent, Key, KeyState,
     KeyboardEvent, Location, Modifiers, MouseButton, MouseButtonAction, MouseButtonEvent, MouseMoveEvent, NamedKey,
-    OffscreenRenderingContext, Opts, Preferences, RenderingContext, Servo, ServoBuilder, WebView, WebViewBuilder,
-    WebViewDelegate, WebViewId, WheelDelta, WheelEvent, WheelMode, WindowRenderingContext,
+    OffscreenRenderingContext, Opts, Preferences, RenderingContext, Servo, ServoBuilder, UserContentManager, UserScript,
+    WebView, WebViewBuilder, WebViewDelegate, WebViewId, WheelDelta, WheelEvent, WheelMode, WindowRenderingContext,
 };
+
+/// Runs in every page on the engine: links the stylesheet that hides the boxes blocked ads leave
+/// (cosmetic filters, which the network layer's content blocker serves from uBOL's data). First
+/// with the host's filters, then again with the page's ids and classes as they appear.
+// shortcut: rescans at DOMContentLoaded, load and 3 s later, not on every DOM change; upgrade with
+// a throttled MutationObserver if late-built pages keep their empty boxes.
+const COSMETIC_JS: &str = r#"(() => {
+  if (!/^https?:$/.test(location.protocol)) return;
+  const sent = new Set();
+  let first = true;
+  const link = () => {
+    const tokens = [];
+    for (const el of document.querySelectorAll('[id],[class]')) {
+      for (const t of [el.id && '#' + el.id, ...Array.from(el.classList, c => '.' + c)]) {
+        if (t && !sent.has(t)) { sent.add(t); tokens.push(t); }
+      }
+    }
+    if (!first && !tokens.length) return;
+    const l = document.createElement('link');
+    l.rel = 'stylesheet';
+    l.href = 'https://cosmetic.velocity.invalid/css?h=' + encodeURIComponent(location.hostname) +
+      '&t=' + encodeURIComponent(tokens.join(',')) + (first ? '' : '&p=1');
+    first = false;
+    (document.head || document.documentElement).appendChild(l);
+  };
+  link();
+  document.addEventListener('DOMContentLoaded', link);
+  addEventListener('load', () => { link(); setTimeout(link, 3000); });
+})();"#;
 use tao::{
     dpi::PhysicalSize,
     event::{ElementState, MouseButton as TaoButton, MouseScrollDelta, WindowEvent},
@@ -46,6 +75,8 @@ struct Inner {
     /// Popups (`window.open`, `target=_blank`) built by Servo, waiting for a tab.
     popups: RefCell<Vec<Page>>,
     delegate: RefCell<Option<Rc<dyn WebViewDelegate>>>,
+    /// Scripts every page runs (the cosmetic filters' stylesheet link).
+    user_content: Rc<UserContentManager>,
 }
 
 pub struct Engine {
@@ -92,10 +123,13 @@ impl Engine {
             .build();
         servo.setup_logging();
 
+        let user_content = Rc::new(UserContentManager::new(&servo));
+        user_content.add_script(Rc::new(UserScript::new(COSMETIC_JS.into(), None)));
         let inner = Rc::new(Inner {
             window,
             context,
             proxy,
+            user_content,
             tabs: RefCell::new(HashMap::new()),
             popups: RefCell::new(Vec::new()),
             delegate: RefCell::new(None),
@@ -328,6 +362,7 @@ impl Inner {
         let webview = builder(context.clone())
             .hidpi_scale_factor(Scale::new(self.window.scale_factor() as f32))
             .delegate(delegate)
+            .user_content_manager(self.user_content.clone())
             .build();
         // Pages follow the Windows light or dark setting, as they do in WebView2.
         webview.notify_theme_change(match self.window.theme() {
