@@ -22,6 +22,18 @@
 //! in the token it starts with. Upgrade with a restricted token at CreateProcess in the
 //! constellation's `spawn_multiprocess`.
 
+/// GStreamer caches its plugin registry in %LOCALAPPDATA%, which a Low-integrity process may not
+/// write: it would rescan every plugin in every content process. LocalLow is writable at Low.
+pub fn use_low_integrity_caches() {
+    if let Some(profile) = std::env::var_os("USERPROFILE") {
+        let dir = std::path::PathBuf::from(profile).join(r"AppData\LocalLow\Velocity");
+        let _ = std::fs::create_dir_all(&dir);
+        let file = dir.join("gstreamer-registry.bin");
+        // SAFETY: called first thing in the process, before any other thread exists.
+        unsafe { std::env::set_var("GST_REGISTRY", file) };
+    }
+}
+
 #[cfg(windows)]
 pub fn lock_down() -> Result<(), String> {
     use std::ffi::c_void;
