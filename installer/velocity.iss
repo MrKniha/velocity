@@ -1,5 +1,5 @@
 ; Velocity setup (Inno Setup 6). Built by scripts\package.ps1, which passes the version, the staged files and the icon:
-;   ISCC /DAppVersion=0.1.0 /DStage=<folder with velocity.exe and extensions> /DIcon=<velocity.ico> /O<output dir> velocity.iss
+;   ISCC /DAppVersion=0.1.0 /DStage=<folder with velocity.exe, its DLLs and extensions> /DIcon=<velocity.ico> /O<output dir> velocity.iss
 ; Installs for the current user only (no admin prompt) into %LOCALAPPDATA%\Programs\Velocity, adds a Start menu entry
 ; (so Windows search finds it), an uninstaller in Settings > Apps, and registers Velocity as a browser so it can be
 ; picked in Settings > Default apps.
@@ -36,6 +36,8 @@ Name: desktopicon; Description: "Create a desktop shortcut"; GroupDescription: "
 
 [Files]
 Source: "{#Stage}\velocity.exe"; DestDir: "{app}"; Flags: ignoreversion
+; The engine's runtime (ANGLE, GStreamer): velocity.exe loads them from its own folder.
+Source: "{#Stage}\*.dll"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#Stage}\README.txt"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#Stage}\extensions\*"; DestDir: "{app}\extensions"; Flags: ignoreversion recursesubdirs createallsubdirs
 
