@@ -1578,13 +1578,13 @@ fn seed_extensions(bundled: &Path, data: &Path) {
 
 /// `velocity.exe <address>`, as Windows starts the default browser for a link: only web addresses, never files.
 /// Sites that need what Velocity's engine doesn't have yet. Its Media Source Extensions play WebM
-/// (VP8, VP9, Opus) and MP4 (H.264, AAC): YouTube and Twitch play. DRM (Widevine, PlayReady,
+/// (VP8, VP9, Opus) and MP4 (H.264, AAC): YouTube, Twitch and Kick play. DRM (Widevine, PlayReady,
 /// FairPlay, which Servo can't license) it can't have: Netflix, Spotify, and Vimeo, which serves
-/// its videos with DRM only. Kick and Dailymotion aren't verified yet. They open in WebView2.
+/// its videos with DRM only. Dailymotion isn't verified yet. They open in WebView2.
 // shortcut: a fixed list; upgrade by testing each site on the engine (the DRM sites stay).
 const WEBVIEW2_SITES: &[&str] = &[
     "netflix.com", "spotify.com", "disneyplus.com",
-    "primevideo.com", "max.com", "hbomax.com", "vimeo.com", "dailymotion.com", "kick.com", "skyshowtime.com",
+    "primevideo.com", "max.com", "hbomax.com", "vimeo.com", "dailymotion.com", "skyshowtime.com",
     "voyo.sk", "voyo.cz", "music.apple.com", "tv.apple.com", "soundcloud.com", "deezer.com", "tidal.com",
 ];
 
@@ -1912,6 +1912,7 @@ mod tests {
         assert!(!needs_webview2("https://www.youtube.com/watch?v=x"), "YouTube plays on the engine");
         assert!(!needs_webview2("https://www.twitch.tv/x"), "Twitch plays on the engine");
         assert!(needs_webview2("https://vimeo.com/1"));
+        assert!(!needs_webview2("https://kick.com/eslcs"), "Kick plays on the engine");
         assert!(needs_webview2("https://open.spotify.com/track/1"));
         assert!(!needs_webview2("https://en.wikipedia.org/wiki/YouTube"));
         assert!(!needs_webview2("https://notyoutube.com/"));
