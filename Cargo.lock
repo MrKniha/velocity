@@ -9112,6 +9112,7 @@ dependencies = [
 name = "velocity"
 version = "0.1.0"
 dependencies = [
+ "cookie 0.18.2",
  "embed-resource",
  "euclid",
  "rfd",

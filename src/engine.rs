@@ -229,6 +229,23 @@ impl Engine {
         }
     }
 
+    /// Put cookies imported from another browser into the engine's cookie jar (the user stays
+    /// logged in to those sites on pages the engine shows). Returns how many it took.
+    pub fn import_cookies(&self, cookies: &[crate::import::Cookie]) -> usize {
+        let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0.0, |d| d.as_secs_f64());
+        let mut added = 0;
+        for c in cookies {
+            let Some(cookie) = engine_cookie(c, now) else { continue };
+            // The URL the cookie is set from: its host, and https for a Secure cookie.
+            let scheme = if c.secure { "https" } else { "http" };
+            let path = if c.path.starts_with('/') { c.path.as_str() } else { "/" };
+            let Ok(url) = Url::parse(&format!("{scheme}://{}{path}", c.host.trim_start_matches('.'))) else { continue };
+            self.servo.site_data_manager().set_cookie_for_url(url, cookie, None);
+            added += 1;
+        }
+        added
+    }
+
     pub fn exit_fullscreen(&self) {
         let _ = self.active_webview().map(|w| w.exit_fullscreen());
     }
@@ -451,6 +468,30 @@ impl WebViewDelegate for Delegate {
     }
 }
 
+/// An imported cookie as Servo's cookie type, or None if it has expired. A host starting with a dot
+/// is a domain cookie (for its subdomains too); otherwise the cookie is for that host only.
+fn engine_cookie(c: &crate::import::Cookie, now: f64) -> Option<cookie::Cookie<'static>> {
+    use cookie::SameSite;
+    if c.expires <= now {
+        return None;
+    }
+    let mut builder = cookie::Cookie::build((c.name.clone(), c.value.clone()))
+        .path(if c.path.is_empty() { "/".to_string() } else { c.path.clone() })
+        .secure(c.secure)
+        .http_only(c.http_only)
+        .max_age(cookie::time::Duration::seconds((c.expires - now) as i64));
+    // Firefox's 0 is "not set": SameSite=None would also need Secure, or the cookie is refused.
+    builder = match c.same_site {
+        2 => builder.same_site(SameSite::Strict),
+        1 => builder.same_site(SameSite::Lax),
+        _ => builder,
+    };
+    if let Some(domain) = c.host.strip_prefix('.') {
+        builder = builder.domain(domain.to_string());
+    }
+    Some(builder.build())
+}
+
 #[derive(Clone)]
 struct Waker(EventLoopProxy<UserEvent>);
 
@@ -530,6 +571,29 @@ fn mouse_button(button: TaoButton) -> MouseButton {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn imported_cookies() {
+        let c = |host: &str, expires: f64, same_site: i64| crate::import::Cookie {
+            name: "sid".into(),
+            value: "1".into(),
+            host: host.into(),
+            path: "/".into(),
+            expires,
+            secure: true,
+            http_only: true,
+            same_site,
+        };
+        let cookie = engine_cookie(&c(".example.com", 2000.0, 1), 1000.0).expect("valid");
+        assert_eq!(cookie.domain(), Some("example.com"));
+        assert_eq!(cookie.same_site(), Some(cookie::SameSite::Lax));
+        assert_eq!(cookie.max_age(), Some(cookie::time::Duration::seconds(1000)));
+        assert!(cookie.http_only() == Some(true) && cookie.secure() == Some(true));
+        let host_only = engine_cookie(&c("www.example.com", 2000.0, 0), 1000.0).unwrap();
+        assert_eq!(host_only.domain(), None, "host-only");
+        assert_eq!(host_only.same_site(), None, "Firefox's 0: not set");
+        assert!(engine_cookie(&c(".example.com", 500.0, 0), 1000.0).is_none(), "expired");
+    }
 
     #[test]
     fn shortcuts() {

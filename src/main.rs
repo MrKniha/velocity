@@ -954,7 +954,12 @@ impl Browser {
         }
         if what.contains('c') && b.has_cookies() {
             match import::firefox_cookies(&b) {
-                Ok(c) => done.push(format!("{} cookies (sites you were logged in to)", import::add_cookies(&self.ui, &c))),
+                Ok(c) => {
+                    let n = import::add_cookies(&self.ui, &c);
+                    // Web pages render on the engine: it gets the logins too.
+                    let n = self.engine.as_ref().map_or(n, |engine| engine.import_cookies(&c).max(n));
+                    done.push(format!("{n} cookies (sites you were logged in to)"))
+                }
                 Err(e) => failed.push(format!("cookies ({e})")),
             }
         }

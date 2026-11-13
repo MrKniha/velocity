@@ -17,6 +17,8 @@ wry = { version = "0.57.1", features = ["devtools"] }
 servo = { version = "=0.8.0", features = ["no-wgl", "media-gstreamer"] }
 # The (patched) network layer Servo uses, for its content blocker (ads and trackers).
 servo-net = "=0.8.0"
+# The cookie type Servo's site data manager takes (imported logins go into the engine too).
+cookie = "0.18"
 # Same crate instance Stylo reads its prefs from; used to switch on `layout.css.masking.enabled`.
 stylo_static_prefs = "=0.23.0"
 euclid = "0.22"
