@@ -1,0 +1,5 @@
+[env]
+# aws-lc-sys (TLS crypto) needs NASM on Windows; use its prebuilt objects instead of requiring an install.
+AWS_LC_SYS_PREBUILT_NASM = "1"
+# MSVC's STL headers reject libclang older than 19 (PyPI ships 18). bindgen only parses them.
+BINDGEN_EXTRA_CLANG_ARGS = "-D_ALLOW_COMPILER_AND_STL_VERSION_MISMATCH"
