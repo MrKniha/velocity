@@ -147,7 +147,7 @@ impl Browser {
     fn add_tab(&mut self, url: &str, restored: Option<String>) {
         let id = self.next_id;
         self.next_id += 1;
-        if url != NEW_TAB && self.engine.is_some() {
+        if url != NEW_TAB && self.engine.is_some() && !needs_webview2(url) {
             let pending = restored.is_some().then(|| url.to_string());
             let title = restored.unwrap_or_else(|| "New tab".into());
             if pending.is_none() {
@@ -161,6 +161,23 @@ impl Browser {
             }
             return;
         }
+        let new_tab = url == NEW_TAB;
+        let view = self.make_view(id, if restored.is_some() { "about:blank" } else { url });
+        let shown_url = if new_tab { String::new() } else { url.to_string() };
+        if let Some(title) = restored {
+            let _ = view.set_visible(false);
+            self.tabs.push(Tab { id, title, url: shown_url, view: Some(view), unseen: false, pending: Some(url.to_string()) });
+            return;
+        }
+        self.tabs.push(Tab { id, title: "New tab".into(), url: shown_url, view: Some(view), unseen: false, pending: None });
+        self.activate(self.tabs.len() - 1);
+        if let (true, Some(view)) = (new_tab, self.current()) {
+            let _ = view.focus(); // type into the centred search bar straight away
+        }
+    }
+
+    /// A WebView2 for tab `id`: the new tab page (`NEW_TAB`), or a site the engine can't show yet.
+    fn make_view(&mut self, id: u32, url: &str) -> WebView {
         let (p1, p2, p3, p4) = (self.proxy.clone(), self.proxy.clone(), self.proxy.clone(), self.proxy.clone());
         let new_tab = url == NEW_TAB;
         let init = self.page_init_js();
@@ -168,8 +185,6 @@ impl Browser {
         let builder = WebViewBuilder::new_with_web_context(&mut self.ctx);
         let builder = if new_tab {
             builder.with_html(include_str!("pages/newtab.html")).with_background_color(self.settings.card_rgba())
-        } else if restored.is_some() {
-            builder.with_url("about:blank")
         } else {
             builder.with_url(url)
         };
@@ -220,17 +235,7 @@ impl Browser {
         } else {
             let _ = view.zoom(self.settings.page_zoom as f64 / 100.0);
         }
-        let shown_url = if new_tab { String::new() } else { url.to_string() };
-        if let Some(title) = restored {
-            let _ = view.set_visible(false);
-            self.tabs.push(Tab { id, title, url: shown_url, view: Some(view), unseen: false, pending: Some(url.to_string()) });
-            return;
-        }
-        self.tabs.push(Tab { id, title: "New tab".into(), url: shown_url, view: Some(view), unseen: false, pending: None });
-        self.activate(self.tabs.len() - 1);
-        if let (true, Some(view)) = (new_tab, self.current()) {
-            let _ = view.focus(); // type into the centred search bar straight away
-        }
+        view
     }
 
     fn zoom(&self) -> f32 {
@@ -243,13 +248,23 @@ impl Browser {
         let id = self.tabs[index].id;
         let zoom = self.zoom();
         match self.engine.as_mut() {
-            Some(engine) if engine.has(id) || url.starts_with("http") => {
+            Some(engine) if !needs_webview2(url) && (engine.has(id) || url.starts_with("http")) => {
                 engine.load(id, url, zoom);
                 self.tabs[index].view = None;
             }
-            _ => {
-                if let Some(view) = &self.tabs[index].view {
-                    let _ = view.load_url(url);
+            engine => {
+                if let Some(engine) = engine {
+                    engine.close(id); // a site the engine can't show yet moves to WebView2
+                }
+                match &self.tabs[index].view {
+                    Some(view) => {
+                        let _ = view.load_url(url);
+                    }
+                    None => {
+                        let view = self.make_view(id, url);
+                        let _ = view.set_visible(false); // the caller shows the tab
+                        self.tabs[index].view = Some(view);
+                    }
                 }
             }
         }
@@ -1562,6 +1577,20 @@ fn seed_extensions(bundled: &Path, data: &Path) {
 }
 
 /// `velocity.exe <address>`, as Windows starts the default browser for a link: only web addresses, never files.
+/// Sites that need what Velocity's engine doesn't have yet: Media Source Extensions (adaptive
+/// video), or DRM (Widevine, which Servo can't license). They open in WebView2.
+// shortcut: a fixed list; upgrade when the engine has MSE (then only the DRM sites stay).
+const WEBVIEW2_SITES: &[&str] = &[
+    "youtube.com", "youtu.be", "youtube-nocookie.com", "twitch.tv", "netflix.com", "spotify.com", "disneyplus.com",
+    "primevideo.com", "max.com", "hbomax.com", "vimeo.com", "dailymotion.com", "kick.com", "skyshowtime.com",
+    "voyo.sk", "voyo.cz", "music.apple.com", "tv.apple.com", "soundcloud.com", "deezer.com", "tidal.com",
+];
+
+fn needs_webview2(url: &str) -> bool {
+    let host = host(url).trim_start_matches("www.").to_ascii_lowercase();
+    WEBVIEW2_SITES.iter().any(|site| host == *site || host.ends_with(&format!(".{site}")))
+}
+
 fn start_url() -> Option<String> {
     std::env::args().skip(1).find(|a| a.starts_with("https://") || a.starts_with("http://"))
 }
@@ -1716,6 +1745,13 @@ fn main() -> wry::Result<()> {
             Event::UserEvent(UserEvent::NewTab(url)) => b.open_tab(&url),
             Event::UserEvent(UserEvent::UrlChanged(id, url)) => {
                 if let Some(i) = b.index_of(id) {
+                    // A page on the engine went (by a link) to a site it can't show yet: WebView2 takes over.
+                    if needs_webview2(&url) && b.engine.as_ref().is_some_and(|e| e.has(id)) {
+                        b.navigate(i, &url);
+                        if i == b.active {
+                            b.activate(i);
+                        }
+                    }
                     b.set_url(i, url);
                 }
             }
@@ -1866,6 +1902,16 @@ mod tests {
         assert_eq!(active, 1, "b.com was open; the new tab page before it isn't restored");
         assert_eq!(parse_session("active\t1\nhttps://a.com/\tA\n\tNew tab\n").1, 0, "an open new tab page falls back to the page before");
         assert!(parse_session("").0.is_empty());
+    }
+
+    #[test]
+    fn webview2_sites() {
+        assert!(needs_webview2("https://www.youtube.com/watch?v=x"));
+        assert!(needs_webview2("https://m.youtube.com/"));
+        assert!(needs_webview2("https://open.spotify.com/track/1"));
+        assert!(!needs_webview2("https://en.wikipedia.org/wiki/YouTube"));
+        assert!(!needs_webview2("https://notyoutube.com/"));
+        assert!(!needs_webview2("velocity:newtab"));
     }
 
     #[test]
