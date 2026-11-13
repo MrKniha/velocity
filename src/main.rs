@@ -2,12 +2,14 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod downloads;
+mod engine;
 mod history;
 mod import;
 mod icon;
 mod media;
 mod picker;
 mod profiles;
+mod sandbox;
 mod settings;
 
 use std::path::{Path, PathBuf};
@@ -66,13 +68,18 @@ enum UserEvent {
     NewTab(String),
     UrlChanged(u32, String),
     TitleChanged(u32, String),
+    /// The engine has work: pump it.
+    Engine,
+    /// A page on the engine opened popups (`window.open`, `target=_blank`): give each a tab.
+    EnginePopup,
 }
 
 struct Tab {
     id: u32,
     title: String,
     url: String, // empty while the tab shows the new-tab page
-    view: WebView,
+    /// The new tab page (Velocity UI, WebView2). Web pages are on the engine instead: `None`.
+    view: Option<WebView>,
     unseen: bool, // navigated while in the background; marked until visited
     pending: Option<String>, // restored from the last session: the page loads only when the tab is opened
 }
@@ -105,6 +112,8 @@ struct Browser {
     wallpapers: Vec<media::Wallpaper>,
     arrange_next: bool, // the next new tab opens in arrange mode
     settings_page: &'static str, // the page the settings panel opens on next, or "" for the last one
+    /// Velocity's engine, which shows every web page; `None` with VELOCITY_WEBVIEW2=1 (WebView2 does).
+    engine: Option<engine::Engine>,
 }
 
 impl Browser {
@@ -138,6 +147,20 @@ impl Browser {
     fn add_tab(&mut self, url: &str, restored: Option<String>) {
         let id = self.next_id;
         self.next_id += 1;
+        if url != NEW_TAB && self.engine.is_some() {
+            let pending = restored.is_some().then(|| url.to_string());
+            let title = restored.unwrap_or_else(|| "New tab".into());
+            if pending.is_none() {
+                let zoom = self.zoom();
+                self.engine.as_mut().expect("engine").load(id, url, zoom);
+            }
+            let waiting = pending.is_some();
+            self.tabs.push(Tab { id, title, url: url.to_string(), view: None, unseen: false, pending });
+            if !waiting {
+                self.activate(self.tabs.len() - 1);
+            }
+            return;
+        }
         let (p1, p2, p3, p4) = (self.proxy.clone(), self.proxy.clone(), self.proxy.clone(), self.proxy.clone());
         let new_tab = url == NEW_TAB;
         let init = self.page_init_js();
@@ -186,7 +209,7 @@ impl Browser {
             })
             .build_as_child(&self.window)
             .expect("create tab webview");
-        round_corners(&view, &self.window, &self.settings, bounds);
+        round_corners(host_hwnd(&view), &self.window, &self.settings, bounds);
         let p5 = self.proxy.clone();
         downloads::watch(&view, id, move |u| {
             let _ = p5.send_event(UserEvent::Download(u));
@@ -200,13 +223,50 @@ impl Browser {
         let shown_url = if new_tab { String::new() } else { url.to_string() };
         if let Some(title) = restored {
             let _ = view.set_visible(false);
-            self.tabs.push(Tab { id, title, url: shown_url, view, unseen: false, pending: Some(url.to_string()) });
+            self.tabs.push(Tab { id, title, url: shown_url, view: Some(view), unseen: false, pending: Some(url.to_string()) });
             return;
         }
-        self.tabs.push(Tab { id, title: "New tab".into(), url: shown_url, view, unseen: false, pending: None });
+        self.tabs.push(Tab { id, title: "New tab".into(), url: shown_url, view: Some(view), unseen: false, pending: None });
         self.activate(self.tabs.len() - 1);
-        if new_tab {
-            let _ = self.current().focus(); // type into the centred search bar straight away
+        if let (true, Some(view)) = (new_tab, self.current()) {
+            let _ = view.focus(); // type into the centred search bar straight away
+        }
+    }
+
+    fn zoom(&self) -> f32 {
+        self.settings.page_zoom as f32 / 100.0
+    }
+
+    /// Load `url` in tab `index`. Web pages go to the engine; a new tab page leaving for a site
+    /// gives its WebView2 up. The caller shows the tab again if it is the active one.
+    fn navigate(&mut self, index: usize, url: &str) {
+        let id = self.tabs[index].id;
+        let zoom = self.zoom();
+        match self.engine.as_mut() {
+            Some(engine) if engine.has(id) || url.starts_with("http") => {
+                engine.load(id, url, zoom);
+                self.tabs[index].view = None;
+            }
+            _ => {
+                if let Some(view) = &self.tabs[index].view {
+                    let _ = view.load_url(url);
+                }
+            }
+        }
+    }
+
+    /// Whether the shown tab is a web page on the engine.
+    fn on_engine(&self) -> Option<&engine::Engine> {
+        let id = self.tabs.get(self.active)?.id;
+        self.engine.as_ref().filter(|e| e.has(id))
+    }
+
+    /// The window a tab is drawn in: its WebView2 host, or the engine's window.
+    fn tab_hwnd(&self, index: usize) -> Option<HWND> {
+        match (&self.tabs.get(index)?.view, &self.engine) {
+            (Some(view), _) => host_hwnd(view),
+            (None, Some(engine)) => Some(HWND(engine.hwnd() as _)),
+            (None, None) => None,
         }
     }
 
@@ -215,9 +275,9 @@ impl Browser {
         let background = index != self.active;
         let tab = &mut self.tabs[index];
         if url.starts_with("http") {
-            if tab.url.is_empty() {
-                let _ = tab.view.set_background_color((255, 255, 255, 255));
-                let _ = tab.view.zoom(self.settings.page_zoom as f64 / 100.0);
+            if let (true, Some(view)) = (tab.url.is_empty(), &tab.view) {
+                let _ = view.set_background_color((255, 255, 255, 255));
+                let _ = view.zoom(self.settings.page_zoom as f64 / 100.0);
             }
             if self.settings.history {
                 self.history.record(&url, "");
@@ -233,6 +293,9 @@ impl Browser {
             return;
         }
         let closed = self.tabs.remove(index); // dropping the WebView destroys it
+        if let Some(engine) = self.engine.as_mut() {
+            engine.close(closed.id);
+        }
         if self.settings_tab == Some(closed.id) {
             self.close_settings(); // the panel belonged to that tab
         }
@@ -247,6 +310,9 @@ impl Browser {
         if self.fullscreen {
             // The full-screen page is going away (closed or switched from): give the window back.
             self.fullscreen = false;
+            if let Some(engine) = &self.engine {
+                engine.exit_fullscreen(); // the page leaves full screen too
+            }
             self.window.set_fullscreen(None);
             self.active = index.min(self.tabs.len() - 1);
             self.layout();
@@ -254,17 +320,25 @@ impl Browser {
         self.active = index;
         self.tabs[index].unseen = false;
         if let Some(url) = self.tabs[index].pending.take() {
-            let _ = self.tabs[index].view.load_url(&url);
+            self.navigate(index, &url);
         }
         // Show the new page before hiding the old one, so the empty frame never flashes in between.
-        let _ = self.tabs[index].view.set_visible(true);
+        let id = self.tabs[index].id;
+        if let Some(engine) = self.engine.as_mut() {
+            engine.activate(Some(id)); // hidden when this tab shows the new tab page
+        }
+        if let Some(view) = &self.tabs[index].view {
+            let _ = view.set_visible(true);
+            memory_target(view, false);
+        }
         // Always in front: with window glass the tab UI spans the window underneath, and anything that raised it
         // (suggestions, compact peek) would otherwise cover a tab that was hidden at the time.
-        bring_to_top(&self.tabs[index].view);
-        memory_target(&self.tabs[index].view, false);
+        bring_to_top(self.tab_hwnd(index));
         for (_, t) in self.tabs.iter().enumerate().filter(|(i, _)| *i != index) {
-            let _ = t.view.set_visible(false);
-            memory_target(&t.view, true); // background tabs give memory back to Windows
+            if let Some(view) = &t.view {
+                let _ = view.set_visible(false);
+                memory_target(view, true); // background tabs give memory back to Windows
+            }
         }
         self.show_settings_if_owner();
         self.sync_ui();
@@ -277,7 +351,7 @@ impl Browser {
             let mine = self.settings_tab == Some(self.tabs[self.active].id);
             let _ = view.set_visible(mine);
             if mine {
-                bring_to_top(view); // tabs opened since then sit above it
+                bring_to_top(host_hwnd(view)); // tabs opened since then sit above it
             }
         }
     }
@@ -291,8 +365,9 @@ impl Browser {
         self.tabs.iter().position(|t| t.id == id)
     }
 
-    fn current(&self) -> &WebView {
-        &self.tabs[self.active].view
+    /// The shown tab's new tab page, if it shows one.
+    fn current(&self) -> Option<&WebView> {
+        self.tabs.get(self.active)?.view.as_ref()
     }
 
     /// Essentials switch to an open tab on the same site instead of opening duplicates.
@@ -321,7 +396,7 @@ impl Browser {
         self.sync_ui();
         let list: Vec<String> = self.essentials.iter().map(|e| js_str(e)).collect();
         let js = format!("renderEssentials([{}])", list.join(","));
-        for view in self.tabs.iter().filter(|t| t.url.is_empty()).map(|t| &t.view).chain(self.settings_view.as_ref()) {
+        for view in self.tabs.iter().filter(|t| t.url.is_empty()).filter_map(|t| t.view.as_ref()).chain(self.settings_view.as_ref()) {
             let _ = view.evaluate_script(&js);
         }
     }
@@ -406,25 +481,41 @@ impl Browser {
         if self.fullscreen {
             let (w, h) = logical_size(&self.window);
             let _ = self.ui.set_visible(false);
-            let view = self.current();
-            let _ = view.set_bounds(rect((0.0, 0.0, w, h)));
-            clear_region(view);
-            bring_to_top(view);
+            let full = rect((0.0, 0.0, w, h));
+            if let Some(view) = self.current() {
+                let _ = view.set_bounds(full);
+            }
+            self.place_engine(full, 0);
+            let hwnd = self.tab_hwnd(self.active);
+            if self.on_engine().is_none() {
+                clear_region(hwnd);
+            }
+            bring_to_top(hwnd);
             return;
         }
         let _ = self.ui.set_bounds(self.sidebar_bounds());
         let _ = self.ui.set_visible(self.sidebar_shown());
         if self.peeking {
-            bring_to_top(&self.ui); // in compact mode the sidebar overlays the page
+            bring_to_top(host_hwnd(&self.ui)); // in compact mode the sidebar overlays the page
         } else {
-            send_to_bottom(&self.ui); // under every page again (it spans the window with window glass)
+            send_to_bottom(host_hwnd(&self.ui)); // under every page again (it spans the window with window glass)
         }
         let b = self.content_bounds();
-        for view in self.tabs.iter().map(|t| &t.view).chain(self.settings_view.as_ref()) {
+        for view in self.tabs.iter().filter_map(|t| t.view.as_ref()).chain(self.settings_view.as_ref()) {
             let _ = view.set_bounds(b);
-            round_corners(view, &self.window, &self.settings, b);
+            round_corners(host_hwnd(view), &self.window, &self.settings, b);
         }
+        self.place_engine(b, (self.settings.radius as f64 * 2.0 * self.window.scale_factor()) as i32);
         self.push_frame();
+    }
+
+    /// The engine's window covers `bounds` (logical), like a tab's WebView would.
+    fn place_engine(&self, bounds: Rect, corner: i32) {
+        let Some(engine) = &self.engine else { return };
+        let scale = self.window.scale_factor();
+        let position = bounds.position.to_physical::<i32>(scale);
+        let size = bounds.size.to_physical::<u32>(scale);
+        engine.set_bounds(position.x, position.y, size.width, size.height, corner);
     }
 
     fn set_peek(&mut self, peek: bool) {
@@ -570,7 +661,7 @@ impl Browser {
             })
             .build_as_child(&self.window)
             .expect("create settings webview");
-        round_corners(&view, &self.window, &self.settings, bounds);
+        round_corners(host_hwnd(&view), &self.window, &self.settings, bounds);
         media::map(&view, media::BG_HOST, &media::bg_dir(&self.dir));
         media::map(&view, profiles::AVATAR_HOST, &profiles::avatars_dir(&self.base));
         let _ = view.focus();
@@ -645,8 +736,8 @@ impl Browser {
     fn push_frame(&self) {
         let js = format!("window.velocityFrame&&velocityFrame({})", self.frame_js());
         let _ = self.ui.evaluate_script(&js);
-        for t in self.tabs.iter().filter(|t| t.url.is_empty()) {
-            let _ = t.view.evaluate_script(&js);
+        for view in self.tabs.iter().filter(|t| t.url.is_empty()).filter_map(|t| t.view.as_ref()) {
+            let _ = view.evaluate_script(&js);
         }
     }
 
@@ -677,7 +768,9 @@ impl Browser {
                 // Close settings and put the new tab page into arrange mode (opening one if needed).
                 self.close_settings();
                 if self.tabs[self.active].url.is_empty() {
-                    let _ = self.current().evaluate_script("arrange(true)");
+                    if let Some(view) = self.current() {
+                        let _ = view.evaluate_script("arrange(true)");
+                    }
                 } else {
                     self.arrange_next = true;
                     self.open_tab(NEW_TAB);
@@ -880,12 +973,15 @@ impl Browser {
         let _ = self.ui.set_background_color((r, g, b, 255));
         self.update_opacity();
         let card = self.settings.card_rgba();
-        for t in self.tabs.iter().filter(|t| t.url.is_empty()).map(|t| &t.view).chain(self.settings_view.as_ref()) {
+        for t in self.tabs.iter().filter(|t| t.url.is_empty()).filter_map(|t| t.view.as_ref()).chain(self.settings_view.as_ref()) {
             let _ = t.set_background_color(card);
         }
         let zoom = self.settings.page_zoom as f64 / 100.0;
-        for t in self.tabs.iter().filter(|t| !t.url.is_empty()) {
-            let _ = t.view.zoom(zoom);
+        for view in self.tabs.iter().filter(|t| !t.url.is_empty()).filter_map(|t| t.view.as_ref()) {
+            let _ = view.zoom(zoom);
+        }
+        if let Some(engine) = &self.engine {
+            engine.set_zoom(zoom as f32);
         }
         if !self.settings.compact {
             self.peeking = false;
@@ -893,8 +989,8 @@ impl Browser {
         self.layout();
         self.sync_ui();
         let js = format!("applySettings({})", self.settings.to_js());
-        for t in self.tabs.iter().filter(|t| t.url.is_empty()) {
-            let _ = t.view.evaluate_script(&js);
+        for view in self.tabs.iter().filter(|t| t.url.is_empty()).filter_map(|t| t.view.as_ref()) {
+            let _ = view.evaluate_script(&js);
         }
         if let Some(v) = &self.settings_view {
             let _ = v.evaluate_script(&js);
@@ -928,11 +1024,25 @@ impl Browser {
         let (cmd, arg) = msg.split_once(':').unwrap_or((msg, ""));
         let tab = arg.parse::<u32>().ok().and_then(|id| self.index_of(id));
         let _ = match (cmd, tab) {
-            ("go", _) => self.current().load_url(&to_url(arg, self.settings.search_prefix())),
-            ("back", _) => self.current().evaluate_script("history.back()"),
-            ("forward", _) => self.current().evaluate_script("history.forward()"),
-            ("reload", _) => self.current().reload(),
-            ("devtools", _) => Ok(self.current().open_devtools()),
+            ("go", _) => {
+                let (i, url) = (self.active, to_url(arg, self.settings.search_prefix()));
+                self.navigate(i, &url);
+                Ok(self.activate(i))
+            }
+            ("back", _) => match self.on_engine() {
+                Some(engine) => Ok(engine.back()),
+                None => self.current().map_or(Ok(()), |v| v.evaluate_script("history.back()")),
+            },
+            ("forward", _) => match self.on_engine() {
+                Some(engine) => Ok(engine.forward()),
+                None => self.current().map_or(Ok(()), |v| v.evaluate_script("history.forward()")),
+            },
+            ("reload", _) => match self.on_engine() {
+                Some(engine) => Ok(engine.reload()),
+                None => self.current().map_or(Ok(()), |v| v.reload()),
+            },
+            // shortcut: no developer tools for pages on the engine yet; upgrade with Servo's devtools server.
+            ("devtools", _) => Ok(if let Some(v) = self.current() { v.open_devtools() }),
             ("select", Some(i)) => Ok(self.activate(i)),
             ("close", Some(i)) => Ok(self.close_tab(i)),
             ("pin", Some(i)) => Ok(self.toggle_essential(&self.tabs[i].url.clone())),
@@ -982,9 +1092,9 @@ impl Browser {
             let scale = self.settings.ui_scale as f64 / 100.0;
             let bar = TOP_BAR * scale;
             let _ = self.ui.set_bounds(rect((0.0, 0.0, w, (bar + extra * scale).min(h))));
-            bring_to_top(&self.ui);
+            bring_to_top(host_hwnd(&self.ui));
         } else {
-            bring_to_top(self.current()); // with window glass the tab UI lies under the page
+            bring_to_top(self.tab_hwnd(self.active)); // with window glass the tab UI lies under the page
             self.show_settings_if_owner();
         }
     }
@@ -999,7 +1109,7 @@ impl Browser {
         self.layout();
         let _ = self.ui.evaluate_script(&format!("topPeek({on})"));
         // The tab UI spans the window under the page while the strip shows; keep the page in front.
-        bring_to_top(self.current());
+        bring_to_top(self.tab_hwnd(self.active));
         self.show_settings_if_owner();
     }
 
@@ -1026,7 +1136,13 @@ impl Browser {
             return;
         }
         self.minimized = min;
-        let _ = self.tabs[self.active].view.set_visible(!min);
+        if let Some(view) = &self.tabs[self.active].view {
+            let _ = view.set_visible(!min);
+        }
+        let id = self.tabs[self.active].id;
+        if let Some(engine) = self.engine.as_mut() {
+            engine.activate((!min).then_some(id));
+        }
         if min {
             if let Some(v) = &self.settings_view {
                 let _ = v.set_visible(false);
@@ -1034,6 +1150,29 @@ impl Browser {
         } else {
             self.show_settings_if_owner();
         }
+    }
+
+    /// Tabs for the popups pages on the engine opened; the last one is shown.
+    fn adopt_popups(&mut self) {
+        let Some(engine) = self.engine.as_mut() else { return };
+        let mut next = self.next_id;
+        let ids = engine.adopt_popups(|| {
+            next += 1;
+            next - 1
+        });
+        self.next_id = next;
+        for id in &ids {
+            self.tabs.push(Tab { id: *id, title: "New tab".into(), url: String::new(), view: None, unseen: false, pending: None });
+        }
+        if !ids.is_empty() {
+            self.activate(self.tabs.len() - 1);
+        }
+    }
+
+    /// Before the window closes: the engine saves logins and site data when it is dropped.
+    fn shut_down(&mut self) {
+        self.save_session();
+        self.engine = None;
     }
 
     /// Compact mode: the cursor reaching the tab UI's edge of the window reveals it.
@@ -1202,16 +1341,16 @@ fn host_hwnd(view: &WebView) -> Option<HWND> {
     unsafe { view.controller().ParentWindow(&mut hwnd).ok().map(|_| hwnd) }
 }
 
-fn bring_to_top(view: &WebView) {
-    restack(view, HWND_TOP);
+fn bring_to_top(hwnd: Option<HWND>) {
+    restack(hwnd, HWND_TOP);
 }
 
-fn send_to_bottom(view: &WebView) {
-    restack(view, HWND_BOTTOM);
+fn send_to_bottom(hwnd: Option<HWND>) {
+    restack(hwnd, HWND_BOTTOM);
 }
 
-fn restack(view: &WebView, after: HWND) {
-    if let Some(hwnd) = host_hwnd(view) {
+fn restack(hwnd: Option<HWND>, after: HWND) {
+    if let Some(hwnd) = hwnd {
         unsafe {
             let _ = SetWindowPos(hwnd, Some(after), 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
         }
@@ -1220,8 +1359,8 @@ fn restack(view: &WebView, after: HWND) {
 
 /// Clip the page's host window to a rounded rect so it reads as a floating card.
 // shortcut: window regions are not anti-aliased, so the corners are slightly jagged; upgrade with DirectComposition hosting.
-fn round_corners(view: &WebView, window: &Window, settings: &Settings, bounds: Rect) {
-    let Some(hwnd) = host_hwnd(view) else { return };
+fn round_corners(hwnd: Option<HWND>, window: &Window, settings: &Settings, bounds: Rect) {
+    let Some(hwnd) = hwnd else { return };
     let scale = window.scale_factor();
     let size = bounds.size.to_physical::<i32>(scale);
     let d = (settings.radius as f64 * 2.0 * scale) as i32;
@@ -1298,8 +1437,8 @@ fn memory_target(view: &WebView, low: bool) {
     }
 }
 
-fn clear_region(view: &WebView) {
-    if let Some(hwnd) = host_hwnd(view) {
+fn clear_region(hwnd: Option<HWND>) {
+    if let Some(hwnd) = hwnd {
         unsafe {
             SetWindowRgn(hwnd, None, true);
         }
@@ -1428,6 +1567,20 @@ fn start_url() -> Option<String> {
 }
 
 fn main() -> wry::Result<()> {
+    // Velocity's engine starts web content as copies of this exe: `velocity.exe --content-process <token>`.
+    let mut args = std::env::args().skip(1);
+    if args.next().as_deref() == Some("--content-process") {
+        let token = args.next().expect("--content-process needs a token");
+        // Never run web content unrestricted: exit if the lockdown fails.
+        if let Err(e) = sandbox::lock_down() {
+            eprintln!("content process lockdown failed: {e}");
+            std::process::exit(1);
+        }
+        // Layout runs here, in the content process: Stylo's prefs must be set here too.
+        engine::set_style_prefs();
+        servo::run_content_process(token);
+        return Ok(());
+    }
     let base = data_dir();
     std::fs::create_dir_all(base.join("extensions")).ok();
     if let Some(exe_dir) = std::env::current_exe().ok().and_then(|p| p.parent().map(Path::to_path_buf)) {
@@ -1479,9 +1632,13 @@ fn main() -> wry::Result<()> {
     media::map(&ui, profiles::AVATAR_HOST, &profiles::avatars_dir(&base));
 
     let essentials = load_essentials(&dir);
+    let engine = std::env::var_os("VELOCITY_WEBVIEW2")
+        .is_none()
+        .then(|| engine::Engine::new(&window, &event_loop, proxy.clone(), &dir.join("engine")));
     let mut b = Browser {
         window, ui, ctx, base, dir, profile, history, downloads, downloads_unseen: false, close_after: Vec::new(), proxy, tabs: Vec::new(), active: 0, next_id: 1, essentials, settings,
         settings_view: None, settings_tab: None, peeking: false, minimized: false, fullscreen: false, playing: Default::default(), top_peek: false, we_dirs: Vec::new(), wallpapers: Vec::new(), arrange_next: false, settings_page: "",
+        engine,
     };
     b.update_opacity();
     b.layout();
@@ -1494,8 +1651,29 @@ fn main() -> wry::Result<()> {
 
     event_loop.run(move |event, _, control_flow| {
         *control_flow = ControlFlow::Wait;
+        let engine_window = b.engine.as_ref().map(|e| e.window_id());
         match event {
-            Event::WindowEvent { event: WindowEvent::CloseRequested, .. } => *control_flow = ControlFlow::Exit,
+            Event::UserEvent(UserEvent::Engine) => {
+                if let Some(engine) = &b.engine {
+                    engine.spin();
+                }
+            }
+            Event::UserEvent(UserEvent::EnginePopup) => b.adopt_popups(),
+            Event::RedrawRequested(id) if Some(id) == engine_window => {
+                if let Some(engine) = &b.engine {
+                    engine.paint();
+                }
+            }
+            Event::WindowEvent { window_id, event, .. } if Some(window_id) == engine_window => {
+                let key = b.engine.as_ref().and_then(|e| e.handle(&event));
+                if let Some(key) = key {
+                    b.shortcut(key);
+                }
+            }
+            Event::WindowEvent { event: WindowEvent::CloseRequested, .. } => {
+                b.shut_down();
+                *control_flow = ControlFlow::Exit
+            }
             // Minimising reports a 0x0 size: laying the pages out at that size would squash them to 1 px
             // (the new tab's effects then respawn in a corner), so they are hidden until the window comes back.
             Event::WindowEvent { event: WindowEvent::Resized(size), .. } => {
@@ -1508,6 +1686,7 @@ fn main() -> wry::Result<()> {
             Event::WindowEvent { event: WindowEvent::CursorMoved { position, .. }, .. } => b.cursor_moved(position.x, position.y),
             Event::UserEvent(UserEvent::Ui(msg)) => {
                 if !b.handle_ui(&msg) {
+                    b.shut_down();
                     *control_flow = ControlFlow::Exit;
                 }
             }
@@ -1527,7 +1706,11 @@ fn main() -> wry::Result<()> {
             }
             Event::UserEvent(UserEvent::PageNav(id, q)) => {
                 if let Some(i) = b.index_of(id) {
-                    let _ = b.tabs[i].view.load_url(&to_url(&q, b.settings.search_prefix()));
+                    let url = to_url(&q, b.settings.search_prefix());
+                    b.navigate(i, &url);
+                    if i == b.active {
+                        b.activate(i);
+                    }
                 }
             }
             Event::UserEvent(UserEvent::NewTab(url)) => b.open_tab(&url),
@@ -1544,8 +1727,8 @@ fn main() -> wry::Result<()> {
             }
             Event::UserEvent(UserEvent::PageSuggest(id, q)) => {
                 // Only our new tab page gets history; once the tab shows a site, the site could read the reply.
-                if let Some(t) = b.index_of(id).map(|i| &b.tabs[i]).filter(|t| t.url.is_empty()) {
-                    let _ = t.view.evaluate_script(&b.suggestions_js(&q));
+                if let Some(view) = b.index_of(id).map(|i| &b.tabs[i]).filter(|t| t.url.is_empty()).and_then(|t| t.view.as_ref()) {
+                    let _ = view.evaluate_script(&b.suggestions_js(&q));
                 }
             }
             Event::UserEvent(UserEvent::TitleChanged(id, title)) => {

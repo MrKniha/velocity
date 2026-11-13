@@ -5,12 +5,38 @@ edition = "2024"
 
 [dependencies]
 rfd = "0.17.2"
-rusqlite = { version = "0.37", features = ["bundled"] }
+rusqlite = { version = "0.38", features = ["bundled"] } # the same as Servo: one SQLite in the exe
 serde_json = "1"
 tao = "0.37.2"
 webview2-com = "0.39"
 windows = { version = "0.62", features = ["Win32_Foundation", "Win32_Graphics_Dwm", "Win32_Graphics_Gdi", "Win32_UI_WindowsAndMessaging", "Win32_System_Registry"], default-features = false }
 wry = { version = "0.57.1", features = ["devtools"] }
 
+# Velocity's engine (velocity-engine): web pages render through Servo instead of WebView2.
+# Pinned exactly: servo is pre-1.0 and breaks between monthly releases.
+servo = { version = "=0.8.0", features = ["no-wgl", "media-gstreamer"] }
+# Same crate instance Stylo reads its prefs from; used to switch on `layout.css.masking.enabled`.
+stylo_static_prefs = "=0.23.0"
+euclid = "0.22"
+url = "2.5"
+rustls = { version = "0.23", default-features = false, features = ["logging", "std", "tls12"] }
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security", "Win32_Security_Authorization", "Win32_System_JobObjects", "Win32_System_Threading"] }
+
 [build-dependencies]
 embed-resource = "3"
+
+# The engine's patched Servo crates (each change marked "velocity patch", listed in
+# ../velocity-engine/vendor/README.md).
+[patch.crates-io]
+servo-net = { path = "../velocity-engine/vendor/servo-net" }
+servo-fonts = { path = "../velocity-engine/vendor/servo-fonts" }
+servo-layout = { path = "../velocity-engine/vendor/servo-layout" }
+servo-script = { path = "../velocity-engine/vendor/servo-script" }
+ipc-channel = { path = "../velocity-engine/vendor/ipc-channel" }
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 16
+debug = false
+strip = true
