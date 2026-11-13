@@ -1663,7 +1663,7 @@ fn main() -> wry::Result<()> {
     let essentials = load_essentials(&dir);
     let engine = std::env::var_os("VELOCITY_WEBVIEW2")
         .is_none()
-        .then(|| engine::Engine::new(&window, &event_loop, proxy.clone(), &dir.join("engine")));
+        .then(|| engine::Engine::new(&window, &event_loop, proxy.clone(), &dir.join("engine"), &base.join("extensions").join("uBOLite")));
     let mut b = Browser {
         window, ui, ctx, base, dir, profile, history, downloads, downloads_unseen: false, close_after: Vec::new(), proxy, tabs: Vec::new(), active: 0, next_id: 1, essentials, settings,
         settings_view: None, settings_tab: None, peeking: false, minimized: false, fullscreen: false, playing: Default::default(), top_peek: false, we_dirs: Vec::new(), wallpapers: Vec::new(), arrange_next: false, settings_page: "",

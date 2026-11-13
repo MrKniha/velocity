@@ -59,11 +59,14 @@ pub struct Engine {
 
 impl Engine {
     /// The engine, with its window as a child of `parent`; `data` keeps cookies and site storage.
-    pub fn new(parent: &Window, target: &EventLoopWindowTarget<UserEvent>, proxy: EventLoopProxy<UserEvent>, data: &Path) -> Engine {
+    /// `ad_rules`: uBlock Origin Lite's folder, whose rules block ads and trackers on every page.
+    pub fn new(parent: &Window, target: &EventLoopWindowTarget<UserEvent>, proxy: EventLoopProxy<UserEvent>, data: &Path, ad_rules: &Path) -> Engine {
         use tao::platform::windows::WindowExtWindows;
         use tao::rwh_06::{HasDisplayHandle, HasWindowHandle};
 
         let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
+        // Loads in the background; the network layer blocks nothing until it is ready.
+        net::content_blocker::load(ad_rules.to_path_buf());
         let window = WindowBuilder::new()
             .with_parent_window(parent.hwnd())
             .with_decorations(false)
