@@ -1146,6 +1146,8 @@ impl Browser {
     /// Window opacity, except while the shown tab plays a video or sound or is full screen: then it's solid.
     fn update_opacity(&self) {
         let busy = self.fullscreen || self.tabs.get(self.active).is_some_and(|t| self.playing.contains(&t.id));
+        // A layered (see-through) window doesn't show the engine's GPU-drawn page at all.
+        let busy = busy || self.on_engine().is_some();
         set_opacity(&self.window, if busy { 100 } else { self.settings.opacity });
     }
 
@@ -1677,6 +1679,7 @@ fn main() -> wry::Result<()> {
         .build_as_child(&window)?;
     media::map(&ui, media::BG_HOST, &media::bg_dir(&dir)); // window glass shows the wallpaper in the tab UI too
     media::map(&ui, profiles::AVATAR_HOST, &profiles::avatars_dir(&base));
+    memory_target(&ui, true); // the tab UI is small: WebView2 may trim its caches
 
     let essentials = load_essentials(&dir);
     let engine = std::env::var_os("VELOCITY_WEBVIEW2")
