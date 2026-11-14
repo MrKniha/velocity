@@ -1409,6 +1409,10 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d8b14ccef22fc6f5a8f4d7d768562a182c04ce9a3b3157b91390b52ddfdf1a76"
 
 [[package]]
+name = "drm-wire"
+version = "0.1.0"
+
+[[package]]
 name = "dtoa"
 version = "1.0.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6863,6 +6867,7 @@ version = "0.8.0"
 dependencies = [
  "byte-slice-cast",
  "data-url",
+ "drm-wire",
  "glib 0.22.10",
  "glib-sys 0.22.9",
  "gstreamer",
@@ -7300,6 +7305,7 @@ dependencies = [
  "crossbeam-channel",
  "cssparser",
  "data-url",
+ "drm-wire",
  "encoding_rs",
  "euclid",
  "flate2",
@@ -9113,6 +9119,7 @@ name = "velocity"
 version = "0.1.0"
 dependencies = [
  "cookie 0.18.2",
+ "drm-wire",
  "embed-resource",
  "euclid",
  "rfd",
@@ -9126,6 +9133,7 @@ dependencies = [
  "url",
  "webview2-com",
  "windows",
+ "windows-core",
  "windows-sys 0.61.2",
  "wry",
 ]
