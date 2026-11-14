@@ -1596,12 +1596,14 @@ fn seed_extensions(bundled: &Path, data: &Path) {
 
 /// `velocity.exe <address>`, as Windows starts the default browser for a link: only web addresses, never files.
 /// Sites that need what Velocity's engine doesn't have yet. Its Media Source Extensions play WebM
-/// (VP8, VP9, Opus) and MP4 (H.264, AAC): YouTube, Twitch and Kick play. DRM (Widevine, PlayReady,
-/// FairPlay, which Servo can't license) it can't have: Netflix, Spotify, and Vimeo, which serves
-/// its videos with DRM only. Dailymotion isn't verified yet. They open in WebView2.
-// shortcut: a fixed list; upgrade by testing each site on the engine (the DRM sites stay).
+/// (VP8, VP9, Opus) and MP4 (H.264, AAC): YouTube, Twitch and Kick play. Of DRM it has PlayReady
+/// (through Windows, src/drm.rs), so Netflix plays on it; sites that need Widevine or FairPlay
+/// (Spotify, Vimeo, which serves its videos with DRM only) don't. Dailymotion isn't verified yet.
+/// They open in WebView2.
+// shortcut: a fixed list; upgrade by testing each site on the engine.
 const WEBVIEW2_SITES: &[&str] = &[
-    "netflix.com", "spotify.com", "disneyplus.com",
+    // netflix.com plays on the engine: PlayReady through the DRM service (src/drm.rs).
+    "spotify.com", "disneyplus.com",
     "primevideo.com", "max.com", "hbomax.com", "vimeo.com", "dailymotion.com", "skyshowtime.com",
     "voyo.sk", "voyo.cz", "music.apple.com", "tv.apple.com", "soundcloud.com", "deezer.com", "tidal.com",
 ];
