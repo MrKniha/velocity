@@ -481,8 +481,12 @@ impl WebViewDelegate for Delegate {
         }
     }
 
-    fn notify_crashed(&self, _: WebView, reason: String, _backtrace: Option<String>) {
+    fn notify_crashed(&self, webview: WebView, reason: String, _backtrace: Option<String>) {
         eprintln!("page crashed: {reason}");
+        let Some(inner) = self.0.upgrade() else { return };
+        if let Some(tab) = inner.tab_of(&webview) {
+            let _ = inner.proxy.send_event(UserEvent::Crashed(tab));
+        }
     }
 
     fn notify_cursor_changed(&self, _: WebView, cursor: Cursor) {

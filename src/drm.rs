@@ -11,7 +11,7 @@
 //! (velocity-engine/experiments/playready/README.md): the PMP host app, one ITA per stream, the
 //! protected media types, our own protection manager, windowless swap chain mode.
 
-#![allow(unsafe_op_in_unsafe_fn)] // Media Foundation calls throughout: the unsafe fns are its helpers.
+#![allow(unsafe_op_in_unsafe_fn, non_snake_case)] // Media Foundation calls throughout; COM method names.
 
 use std::collections::{HashMap, VecDeque};
 use std::fs::File;
@@ -1144,7 +1144,6 @@ fn player_connection(mut up: File, out: Out, keys: u64, webview: String) {
     let mut player: Option<Player> = None;
     let id = random();
     let mut video: Option<Video> = None;
-    let mut last_rect = None;
     while let Ok(frame) = drm_wire::read_frame(&mut up) {
         let Some(message) = ToMain::decode(&frame) else { break };
         if trace() && !matches!(message, ToMain::Sample { .. } | ToMain::Rect { .. }) {
@@ -1205,14 +1204,12 @@ fn player_connection(mut up: File, out: Out, keys: u64, webview: String) {
                     let _ = p.engine.SetMuted(muted);
                 },
                 ToMain::Rect { x, y, width, height, visible } => {
-                    last_rect = Some(((x, y, width, height), visible));
                     place(&p.engine, &mut video, id, &webview, (x, y, width, height), visible);
                 },
                 _ => {},
             }
         }
     }
-    let _ = last_rect;
     remove_video(id);
     if let Some(p) = player {
         unsafe {

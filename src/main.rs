@@ -69,6 +69,10 @@ enum UserEvent {
     NewTab(String),
     UrlChanged(u32, String),
     TitleChanged(u32, String),
+    /// A page on the engine crashed.
+    Crashed(u32),
+    /// Once a minute: background tabs that sat unused give their memory back.
+    Tick,
     /// The engine has work: pump it.
     Engine,
     /// A page on the engine opened popups (`window.open`, `target=_blank`): give each a tab.
@@ -82,7 +86,11 @@ struct Tab {
     /// The new tab page (Velocity UI, WebView2). Web pages are on the engine instead: `None`.
     view: Option<WebView>,
     unseen: bool, // navigated while in the background; marked until visited
-    pending: Option<String>, // restored from the last session: the page loads only when the tab is opened
+    /// Not loaded: restored from the last session, or put to sleep to free its memory. The page
+    /// loads when the tab is opened.
+    pending: Option<String>,
+    /// When the tab was last on screen.
+    shown: std::time::Instant,
 }
 
 struct Browser {
@@ -156,7 +164,7 @@ impl Browser {
                 self.engine.as_mut().expect("engine").load(id, url, zoom);
             }
             let waiting = pending.is_some();
-            self.tabs.push(Tab { id, title, url: url.to_string(), view: None, unseen: false, pending });
+            self.tabs.push(Tab { id, title, url: url.to_string(), view: None, unseen: false, pending, shown: std::time::Instant::now() });
             if !waiting {
                 self.activate(self.tabs.len() - 1);
             }
@@ -167,10 +175,10 @@ impl Browser {
         let shown_url = if new_tab { String::new() } else { url.to_string() };
         if let Some(title) = restored {
             let _ = view.set_visible(false);
-            self.tabs.push(Tab { id, title, url: shown_url, view: Some(view), unseen: false, pending: Some(url.to_string()) });
+            self.tabs.push(Tab { id, title, url: shown_url, view: Some(view), unseen: false, pending: Some(url.to_string()), shown: std::time::Instant::now() });
             return;
         }
-        self.tabs.push(Tab { id, title: "New tab".into(), url: shown_url, view: Some(view), unseen: false, pending: None });
+        self.tabs.push(Tab { id, title: "New tab".into(), url: shown_url, view: Some(view), unseen: false, pending: None, shown: std::time::Instant::now() });
         self.activate(self.tabs.len() - 1);
         if let (true, Some(view)) = (new_tab, self.current()) {
             let _ = view.focus(); // type into the centred search bar straight away
@@ -271,6 +279,31 @@ impl Browser {
         }
     }
 
+    /// The engine can't show tab `id`'s site: WebView2 does, for the rest of this run.
+    fn fall_back(&mut self, id: u32) {
+        let Some(i) = self.index_of(id) else { return };
+        if !self.engine.as_ref().is_some_and(|e| e.has(id)) {
+            return;
+        }
+        let url = self.tabs[i].url.clone();
+        FELL_BACK.lock().unwrap().insert(host(&url).trim_start_matches("www.").to_ascii_lowercase());
+        self.navigate(i, &url);
+        if i == self.active {
+            self.activate(i);
+        }
+    }
+
+    /// Put background tabs unused for `SLEEP_AFTER` to sleep.
+    fn sleep_idle_tabs(&mut self) {
+        let Some(engine) = self.engine.as_mut() else { return };
+        for (i, tab) in self.tabs.iter_mut().enumerate() {
+            if i != self.active && engine.has(tab.id) && !self.playing.contains(&tab.id) && tab.shown.elapsed() >= SLEEP_AFTER {
+                engine.close(tab.id);
+                tab.pending = Some(tab.url.clone());
+            }
+        }
+    }
+
     /// Whether the shown tab is a web page on the engine.
     fn on_engine(&self) -> Option<&engine::Engine> {
         let id = self.tabs.get(self.active)?.id;
@@ -333,8 +366,12 @@ impl Browser {
             self.active = index.min(self.tabs.len() - 1);
             self.layout();
         }
+        if let Some(old) = self.tabs.get_mut(self.active) {
+            old.shown = std::time::Instant::now(); // on screen until now
+        }
         self.active = index;
         self.tabs[index].unseen = false;
+        self.tabs[index].shown = std::time::Instant::now();
         if let Some(url) = self.tabs[index].pending.take() {
             self.navigate(index, &url);
         }
@@ -1195,7 +1232,7 @@ impl Browser {
         });
         self.next_id = next;
         for id in &ids {
-            self.tabs.push(Tab { id: *id, title: "New tab".into(), url: String::new(), view: None, unseen: false, pending: None });
+            self.tabs.push(Tab { id: *id, title: "New tab".into(), url: String::new(), view: None, unseen: false, pending: None, shown: std::time::Instant::now() });
         }
         if !ids.is_empty() {
             self.activate(self.tabs.len() - 1);
@@ -1610,8 +1647,16 @@ const WEBVIEW2_SITES: &[&str] = &[
 
 fn needs_webview2(url: &str) -> bool {
     let host = host(url).trim_start_matches("www.").to_ascii_lowercase();
-    WEBVIEW2_SITES.iter().any(|site| host == *site || host.ends_with(&format!(".{site}")))
+    WEBVIEW2_SITES.iter().any(|site| host == *site || host.ends_with(&format!(".{site}"))) || FELL_BACK.lock().unwrap().contains(&host)
 }
+
+/// Sites that failed on the engine in this run (the page crashed, or a Cloudflare check it
+/// can't pass never ended): WebView2 shows them from then on.
+static FELL_BACK: std::sync::Mutex<std::collections::BTreeSet<String>> = std::sync::Mutex::new(std::collections::BTreeSet::new());
+
+/// A background tab unused this long is put to sleep: its page is dropped (with its process and
+/// memory) and loads again when the tab is opened. Tabs playing sound or video stay.
+const SLEEP_AFTER: std::time::Duration = std::time::Duration::from_secs(15 * 60);
 
 fn start_url() -> Option<String> {
     std::env::args().skip(1).find(|a| a.starts_with("https://") || a.starts_with("http://"))
@@ -1704,6 +1749,13 @@ fn main() -> wry::Result<()> {
         None => {}
     }
 
+    let ticker = b.proxy.clone();
+    std::thread::spawn(move || loop {
+        std::thread::sleep(std::time::Duration::from_secs(60));
+        if ticker.send_event(UserEvent::Tick).is_err() {
+            break;
+        }
+    });
     event_loop.run(move |event, _, control_flow| {
         *control_flow = ControlFlow::Wait;
         let engine_window = b.engine.as_ref().map(|e| e.window_id());
@@ -1714,6 +1766,8 @@ fn main() -> wry::Result<()> {
                 }
             }
             Event::UserEvent(UserEvent::EnginePopup) => b.adopt_popups(),
+            Event::UserEvent(UserEvent::Crashed(id)) => b.fall_back(id),
+            Event::UserEvent(UserEvent::Tick) => b.sleep_idle_tabs(),
             Event::RedrawRequested(id) if Some(id) == engine_window => {
                 if let Some(engine) = &b.engine {
                     engine.paint();
@@ -1793,6 +1847,8 @@ fn main() -> wry::Result<()> {
                     let _ = view.evaluate_script(&b.suggestions_js(&q));
                 }
             }
+            // Cloudflare's "checking your browser" page, which the engine doesn't pass.
+            Event::UserEvent(UserEvent::TitleChanged(id, title)) if title == "Just a moment..." && b.engine.as_ref().is_some_and(|e| e.has(id)) => b.fall_back(id),
             Event::UserEvent(UserEvent::TitleChanged(id, title)) => {
                 if let Some(i) = b.index_of(id) {
                     if b.settings.history && b.tabs[i].url.starts_with("http") {
