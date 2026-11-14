@@ -2,6 +2,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod downloads;
+mod drm;
 mod engine;
 mod history;
 mod import;
@@ -1643,6 +1644,8 @@ fn main() -> wry::Result<()> {
         None => profiles::list(&base).remove(0),
     };
     let dir = profiles::dir(&base, &profile);
+    // Before the engine starts content processes: they find the service through the environment.
+    drm::start(dir.join("engine"));
     let settings = Settings::load(&dir);
     let history = history::History::load(&dir);
     let downloads = downloads::Downloads::load(&dir);

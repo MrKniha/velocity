@@ -111,6 +111,7 @@ impl Engine {
             .with_inner_size(PhysicalSize::new(800, 600))
             .build(target)
             .expect("engine window");
+        crate::drm::set_engine_window(window.hwnd() as isize); // protected video is drawn on it
         let display = window.display_handle().expect("display handle");
         let handle = window.window_handle().expect("window handle");
         let context = Rc::new(WindowRenderingContext::new(display, handle, window.inner_size()).expect("GL context for pages"));
@@ -123,6 +124,9 @@ impl Engine {
             // Memory: Servo keeps its HTTP cache in RAM (bodies too), 5000 entries by default;
             // 500 already held ~20 MB after one YouTube page.
             network_http_cache_size: 500,
+            // Firefox's own format: Servo's adds "Servo/0.8.0", which some sites' firewalls
+            // refuse (PlayReady's license server answers 403).
+            user_agent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:153.0) Gecko/20100101 Firefox/153.0".into(),
             // ...and SpiderMonkey let a page's heap grow 150-300% before collecting it.
             js_mem_gc_high_frequency_heap_growth_max: 150,
             js_mem_gc_high_frequency_heap_growth_min: 120,
@@ -217,6 +221,7 @@ impl Engine {
             if Some(*id) == tab { page.webview.show() } else { page.webview.hide() }
         }
         self.active = tab;
+        crate::drm::set_active_webview(tab.and_then(|t| self.pages.get(&t)).map(|p| p.webview.id().to_string()));
         self.inner.window.set_visible(tab.is_some());
         if tab.is_some() {
             self.inner.window.request_redraw();
