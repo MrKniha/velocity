@@ -117,7 +117,18 @@ impl Engine {
         let _ = context.make_current();
 
         // Off by default in servo 0.8.0, but real sites throw without them (see velocity-engine's compat report).
-        let preferences = Preferences { dom_intersection_observer_enabled: true, dom_adoptedstylesheet_enabled: true, ..Default::default() };
+        let preferences = Preferences {
+            dom_intersection_observer_enabled: true,
+            dom_adoptedstylesheet_enabled: true,
+            // Memory: Servo keeps its HTTP cache in RAM (bodies too), 5000 entries by default;
+            // 500 already held ~20 MB after one YouTube page.
+            network_http_cache_size: 500,
+            // ...and SpiderMonkey let a page's heap grow 150-300% before collecting it.
+            js_mem_gc_high_frequency_heap_growth_max: 150,
+            js_mem_gc_high_frequency_heap_growth_min: 120,
+            js_mem_gc_low_frequency_heap_growth: 120,
+            ..Default::default()
+        };
         set_style_prefs();
         let _ = std::fs::create_dir_all(data);
         let opts = Opts { multiprocess: true, config_dir: Some(data.to_path_buf()), ..Default::default() };
