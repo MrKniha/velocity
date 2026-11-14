@@ -5,3 +5,4 @@
 .impeccable/questions/
 .impeccable/hook.cache.json
 /dist
+graphify-out/
