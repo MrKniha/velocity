@@ -48,6 +48,8 @@ servo-layout = { path = "../velocity-engine/vendor/servo-layout" }
 servo-script = { path = "../velocity-engine/vendor/servo-script" }
 ipc-channel = { path = "../velocity-engine/vendor/ipc-channel" }
 servo-media-player = { path = "../velocity-engine/vendor/servo-media-player" }
+servo-paint = { path = "../velocity-engine/vendor/servo-paint" }
+servo-paint-api = { path = "../velocity-engine/vendor/servo-paint-api" }
 servo-media-gstreamer = { path = "../velocity-engine/vendor/servo-media-gstreamer" }
 servo-script-bindings = { path = "../velocity-engine/vendor/servo-script-bindings" }
 
