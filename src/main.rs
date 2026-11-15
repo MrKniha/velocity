@@ -1730,6 +1730,14 @@ fn main() -> wry::Result<()> {
     media::map(&ui, media::BG_HOST, &media::bg_dir(&dir)); // window glass shows the wallpaper in the tab UI too
     media::map(&ui, profiles::AVATAR_HOST, &profiles::avatars_dir(&base));
     memory_target(&ui, true); // the tab UI is small: WebView2 may trim its caches
+    // With window glass the tab UI spans the window under the pages. Its window didn't clip its
+    // siblings, so it drew over the engine's page (above it in z-order): the page stayed blank.
+    if let Some(hwnd) = host_hwnd(&ui) {
+        use windows::Win32::UI::WindowsAndMessaging::{GWL_STYLE, WS_CLIPSIBLINGS};
+        unsafe {
+            SetWindowLongPtrW(hwnd, GWL_STYLE, GetWindowLongPtrW(hwnd, GWL_STYLE) | WS_CLIPSIBLINGS.0 as isize);
+        }
+    }
 
     let essentials = load_essentials(&dir);
     let engine = std::env::var_os("VELOCITY_WEBVIEW2")
