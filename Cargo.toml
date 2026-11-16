@@ -35,6 +35,8 @@ euclid = "0.22"
 url = "2.5"
 # Response headers for the tab UI page the engine serves itself (same version as Servo's).
 http = "1"
+# Test mode screenshots (VELOCITY_SCREENSHOT); the same crate Servo decodes images with.
+image = { version = "0.25", default-features = false, features = ["png"] }
 rustls = { version = "0.23", default-features = false, features = ["logging", "std", "tls12"] }
 windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security", "Win32_Security_Authorization", "Win32_System_JobObjects", "Win32_System_Threading"] }
 

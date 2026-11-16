@@ -181,6 +181,23 @@ pub struct Engine {
     active: Option<u32>,
     cursor: Cell<DevicePoint>,
     modifiers: Cell<Modifiers>,
+    /// Test mode (`screenshot_path`): when the screenshots are due, and which were saved (1 page, 2 UI).
+    shot_due: Option<std::time::Instant>,
+    shots: Cell<u8>,
+}
+
+/// Test mode: `VELOCITY_SCREENSHOT=<file.png>` saves the page there and the tab UI as
+/// `<file.png>.ui.png`, `VELOCITY_SCREENSHOT_DELAY` seconds (default 20) after start, then exits.
+fn screenshot_path() -> Option<PathBuf> {
+    std::env::var_os("VELOCITY_SCREENSHOT").map(PathBuf::from)
+}
+
+fn save_shot(context: &dyn RenderingContext, size: PhysicalSize<u32>, path: &Path) {
+    let rect = euclid::Box2D::from_size(Size2D::new(size.width as i32, size.height as i32));
+    match context.read_to_image(rect).map(|image| image.save(path)) {
+        Some(Ok(())) => eprintln!("screenshot saved {}", path.display()),
+        other => eprintln!("screenshot failed {}: {:?}", path.display(), other.map(|r| r.err())),
+    }
 }
 
 impl Engine {
@@ -250,7 +267,19 @@ impl Engine {
         });
         let delegate: Rc<dyn WebViewDelegate> = Rc::new(Delegate(Rc::downgrade(&inner)));
         *inner.delegate.borrow_mut() = Some(delegate);
-        Engine { servo, downloads, inner, pages: HashMap::new(), active: None, cursor: Cell::new(DevicePoint::default()), modifiers: Cell::new(Modifiers::empty()) }
+        let shot_due = screenshot_path().map(|_| {
+            let delay = std::env::var("VELOCITY_SCREENSHOT_DELAY").ok().and_then(|s| s.parse().ok()).unwrap_or(20);
+            let waker = inner.proxy.clone();
+            std::thread::spawn(move || {
+                std::thread::sleep(std::time::Duration::from_secs(delay));
+                // Keep waking the loop: a still page sends nothing that would.
+                while waker.send_event(UserEvent::Engine).is_ok() {
+                    std::thread::sleep(std::time::Duration::from_millis(500));
+                }
+            });
+            std::time::Instant::now() + std::time::Duration::from_secs(delay)
+        });
+        Engine { servo, downloads, inner, pages: HashMap::new(), active: None, cursor: Cell::new(DevicePoint::default()), modifiers: Cell::new(Modifiers::empty()), shot_due, shots: Cell::new(0) }
     }
 
     pub fn window_id(&self) -> WindowId {
@@ -349,11 +378,28 @@ impl Engine {
         }
     }
 
+    /// The tab UI's mouse button is up again: Windows' own window-move or resize loop, started from
+    /// the UI, takes the button-up for itself, and the page would think the button is still held
+    /// (no click, no double-click after it).
+    pub fn ui_release(&self) {
+        let Some(ui) = self.inner.ui.get() else { return };
+        if let Some(webview) = ui.webview.get() {
+            let up = MouseButtonEvent::new(MouseButtonAction::Up, MouseButton::Primary, ui.cursor.get().into());
+            webview.notify_input_event(InputEvent::MouseButton(up));
+        }
+    }
+
     pub fn paint_ui(&self) {
         let Some(ui) = self.inner.ui.get() else { return };
         let Some(webview) = ui.webview.get() else { return };
         let _ = ui.context.make_current();
         webview.paint();
+        if self.shot_due.is_some_and(|due| std::time::Instant::now() >= due) && self.shots.get() & 2 == 0 {
+            let mut path = screenshot_path().unwrap().into_os_string();
+            path.push(".ui.png");
+            save_shot(&*ui.context, ui.window.inner_size(), Path::new(&path));
+            self.shots.set(self.shots.get() | 2);
+        }
         ui.context.present();
     }
 
@@ -367,6 +413,22 @@ impl Engine {
     /// Let Servo handle its messages; called whenever it wakes the event loop.
     pub fn spin(&self) {
         self.servo.spin_event_loop();
+        if self.shot_due.is_some_and(|due| std::time::Instant::now() >= due) {
+            if self.shots.get() & 1 == 0 && self.active.is_none() {
+                self.shots.set(self.shots.get() | 1); // no page on the engine to save
+            }
+            self.inner.window.request_redraw();
+            if let Some(ui) = self.inner.ui.get() {
+                ui.window.request_redraw();
+            } else {
+                self.shots.set(self.shots.get() | 2);
+            }
+            if self.shots.get() == 3 {
+                let title = self.active_webview().and_then(|w| w.page_title()).unwrap_or_default();
+                eprintln!("screenshot done title={title:?}");
+                std::process::exit(0);
+            }
+        }
     }
 
     pub fn has(&self, tab: u32) -> bool {
@@ -529,6 +591,10 @@ impl Engine {
             let gl = self.inner.context.glow_gl_api();
             blit(&gl, Rect::new(Point2D::new(0, 0), Size2D::new(size.width as i32, size.height as i32)));
         }
+        if self.shot_due.is_some_and(|due| std::time::Instant::now() >= due) && self.shots.get() & 1 == 0 {
+            save_shot(&*self.inner.context, size, &screenshot_path().unwrap());
+            self.shots.set(self.shots.get() | 1);
+        }
         self.inner.context.present();
     }
 
@@ -570,7 +636,11 @@ impl Engine {
             WindowEvent::ModifiersChanged(state) => self.modifiers.set(modifiers(*state)),
             WindowEvent::KeyboardInput { event, .. } => {
                 let pressed = event.state == ElementState::Pressed;
-                if pressed {
+                // AltGr is Ctrl+Alt to Windows: AltGr+C types "&" on a Slovak keyboard, not Ctrl+Alt+C.
+                let m = self.modifiers.get();
+                let alt_gr_text = m.contains(Modifiers::CONTROL | Modifiers::ALT)
+                    && event.text.as_ref().is_some_and(|t| t.chars().any(|c| !c.is_control()));
+                if pressed && !alt_gr_text {
                     if let Some(shortcut) = shortcut(&event.logical_key, event.physical_key, self.modifiers.get()) {
                         match shortcut {
                             "back" => self.back(),
@@ -744,6 +814,14 @@ impl WebViewDelegate for Delegate {
         }
     }
 
+    /// `<select>` lists, the right-click menu, alert()/confirm()/prompt() and file pickers.
+    fn show_embedder_control(&self, webview: WebView, control: servo::EmbedderControl) {
+        use tao::platform::windows::WindowExtWindows;
+        let Some(inner) = self.0.upgrade() else { return };
+        let window = inner.ui.get().filter(|ui| ui.is(&webview)).map_or(&inner.window, |ui| &ui.window);
+        crate::controls::show(window.hwnd() as isize, &webview, control);
+    }
+
     fn notify_cursor_changed(&self, webview: WebView, cursor: Cursor) {
         let Some(inner) = self.0.upgrade() else { return };
         // shortcut: the common shapes only; others show the arrow. Upgrade with a full table.
@@ -755,6 +833,12 @@ impl WebViewDelegate for Delegate {
             Cursor::NotAllowed | Cursor::NoDrop => CursorIcon::NotAllowed,
             Cursor::Move | Cursor::AllScroll => CursorIcon::Move,
             Cursor::Crosshair => CursorIcon::Crosshair,
+            Cursor::EwResize | Cursor::EResize | Cursor::WResize | Cursor::ColResize => CursorIcon::EwResize,
+            Cursor::NsResize | Cursor::NResize | Cursor::SResize | Cursor::RowResize => CursorIcon::NsResize,
+            Cursor::NwseResize | Cursor::NwResize | Cursor::SeResize => CursorIcon::NwseResize,
+            Cursor::NeswResize | Cursor::NeResize | Cursor::SwResize => CursorIcon::NeswResize,
+            Cursor::Grab | Cursor::Grabbing => CursorIcon::Grab,
+            Cursor::Help => CursorIcon::Help,
             _ => CursorIcon::Default,
         };
         let window = inner.ui.get().filter(|ui| ui.is(&webview)).map_or(&inner.window, |ui| &ui.window);

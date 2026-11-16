@@ -9121,6 +9121,7 @@ dependencies = [
  "embed-resource",
  "euclid",
  "http",
+ "image",
  "rfd",
  "rusqlite",
  "rustls",

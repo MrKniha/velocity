@@ -1,6 +1,7 @@
 // No console window in release builds.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod controls;
 mod downloads;
 mod drm;
 mod engine;
@@ -129,6 +130,7 @@ struct Browser {
     settings_page: &'static str, // the page the settings panel opens on next, or "" for the last one
     /// Velocity's engine, which shows every web page; `None` with VELOCITY_WEBVIEW2=1 (WebView2 does).
     engine: Option<engine::Engine>,
+    last_drag: Option<std::time::Instant>, // when the tab UI last started moving the window
 }
 
 impl Browser {
@@ -1151,7 +1153,13 @@ impl Browser {
             ("go", _) => {
                 let (i, url) = (self.active, to_url(arg, self.settings.search_prefix()));
                 self.navigate(i, &url);
-                Ok(self.activate(i))
+                self.activate(i);
+                // Keys go to the page now, as after Enter in any browser's address bar.
+                match self.on_engine() {
+                    Some(engine) => engine.focus(),
+                    None => drop(self.current().map(|v| v.focus())),
+                }
+                Ok(())
             }
             ("back", _) => match self.on_engine() {
                 Some(engine) => Ok(engine.back()),
@@ -1193,8 +1201,26 @@ impl Browser {
                 "close" => return false,
                 _ => Ok(()),
             },
-            ("drag", _) => Ok(drop(self.window.drag_window())),
+            ("drag", _) => {
+                // Windows' move loop takes the mouse from here on, so the UI page never sees the second
+                // click of a double-click: a second drag this soon is one, and maximizes as on a title bar.
+                let now = std::time::Instant::now();
+                let double = self.last_drag.is_some_and(|t| now - t < std::time::Duration::from_millis(500));
+                self.last_drag = (!double).then_some(now);
+                if double {
+                    self.window.set_maximized(!self.window.is_maximized());
+                } else {
+                    let _ = self.window.drag_window();
+                }
+                if let Some(engine) = &self.engine {
+                    engine.ui_release();
+                }
+                Ok(())
+            }
             ("resize", _) => {
+                if let Some(engine) = &self.engine {
+                    engine.ui_release();
+                }
                 let s = &self.settings;
                 let dir = if s.tabs_top { ResizeDirection::North } else if s.sidebar_right { ResizeDirection::East } else { ResizeDirection::West };
                 Ok(drop(self.window.drag_resize_window(dir)))
@@ -1793,6 +1819,7 @@ fn main() -> wry::Result<()> {
         window, ui, ctx, base, dir, profile, history, downloads, downloads_unseen: false, close_after: Vec::new(), proxy, tabs: Vec::new(), active: 0, next_id: 1, essentials, settings,
         settings_view: None, settings_tab: None, peeking: false, minimized: false, fullscreen: false, playing: Default::default(), top_peek: false, we_dirs: Vec::new(), wallpapers: Vec::new(), arrange_next: false, settings_page: "",
         engine,
+        last_drag: None,
     };
     b.update_opacity();
     b.layout();
