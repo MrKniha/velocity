@@ -3,6 +3,7 @@
 
 mod controls;
 mod downloads;
+mod update;
 mod drm;
 mod engine;
 mod history;
@@ -78,6 +79,10 @@ enum UserEvent {
     Engine,
     /// A page on the engine opened popups (`window.open`, `target=_blank`): give each a tab.
     EnginePopup,
+    /// A newer Velocity is out (src/update.rs).
+    UpdateFound(update::Update),
+    /// Its installer downloaded and checked, or why not.
+    UpdateDownloaded(Result<PathBuf, String>),
 }
 
 struct Tab {
@@ -131,6 +136,7 @@ struct Browser {
     /// Velocity's engine, which shows every web page; `None` with VELOCITY_WEBVIEW2=1 (WebView2 does).
     engine: Option<engine::Engine>,
     last_drag: Option<std::time::Instant>, // when the tab UI last started moving the window
+    update: Option<update::Update>,       // a newer Velocity, offered in the tab UI
 }
 
 impl Browser {
@@ -1084,7 +1090,7 @@ impl Browser {
             .history
             .suggest(q, 6)
             .iter()
-            .map(|e| format!("{{u:{},t:{}}}", js_str(&e.url), js_str(&e.title)))
+            .map(|e| format!("{{u:{},t:{},h:{}}}", js_str(&e.url), js_str(&e.title), e.complete.as_deref().map_or("null".into(), js_str)))
             .collect();
         format!("window.suggestions&&suggestions({},[{}])", js_str(q), items.join(","))
     }
@@ -1192,6 +1198,16 @@ impl Browser {
                 Ok(())
             }
             ("downloads", _) => Ok(self.open_downloads()),
+            ("update", _) => {
+                if let Some(u) = self.update.clone() {
+                    self.ui_js("updateBusy(true)");
+                    let proxy = self.proxy.clone();
+                    std::thread::spawn(move || {
+                        let _ = proxy.send_event(UserEvent::UpdateDownloaded(update::download(&u)));
+                    });
+                }
+                Ok(())
+            }
             ("toppeek", _) => Ok(self.set_top_peek(arg == "1")),
             ("suggest", _) => Ok(self.ui_js(&self.suggestions_js(arg))),
             ("sugg", _) => Ok(self.suggest_space(arg.parse().unwrap_or(0.0))),
@@ -1657,11 +1673,22 @@ const SUGGEST_JS: &str = r#"window.velocitySuggest = (input, box, submit) => {
   input.setAttribute('role', 'combobox');
   input.setAttribute('aria-autocomplete', 'list');
   box.setAttribute('role', 'listbox');
+  let deleting = false;
   window.suggestions = (q, list) => {
     if (q !== input.value.trim() || document.activeElement !== input) return; // an older answer
-    items = list; sel = -1; draw();
+    items = list; sel = -1;
+    // Fill in the site's name after what was typed, selected, as big browsers do ("you" -> youtube.com):
+    // typing on replaces it, Enter opens the site. Not while deleting, or the text would grow back.
+    const site = list[0] && list[0].h;
+    if (site && !deleting && site.startsWith(q.toLowerCase()) && site !== q.toLowerCase() && input.selectionEnd === input.value.length) {
+      input.value = q + site.slice(q.length);
+      input.setSelectionRange(q.length, input.value.length);
+      sel = 0;
+    }
+    draw();
   };
   input.addEventListener('input', () => {
+    deleting = input.value.length <= typed.length; // Backspace over a filled-in name leaves what was typed
     typed = input.value;
     const v = input.value.trim();
     v ? window.ipc.postMessage('suggest:' + v) : close();
@@ -1820,6 +1847,7 @@ fn main() -> wry::Result<()> {
         settings_view: None, settings_tab: None, peeking: false, minimized: false, fullscreen: false, playing: Default::default(), top_peek: false, we_dirs: Vec::new(), wallpapers: Vec::new(), arrange_next: false, settings_page: "",
         engine,
         last_drag: None,
+        update: None,
     };
     b.update_opacity();
     b.layout();
@@ -1830,6 +1858,13 @@ fn main() -> wry::Result<()> {
         None => {}
     }
 
+    let updates = b.proxy.clone();
+    std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_secs(5)); // after start-up, not during it
+        if let Some(u) = update::check() {
+            let _ = updates.send_event(UserEvent::UpdateFound(u));
+        }
+    });
     let ticker = b.proxy.clone();
     std::thread::spawn(move || loop {
         std::thread::sleep(std::time::Duration::from_secs(60));
@@ -1850,6 +1885,18 @@ fn main() -> wry::Result<()> {
             Event::UserEvent(UserEvent::EnginePopup) => b.adopt_popups(),
             Event::UserEvent(UserEvent::Crashed(id)) => b.fall_back(id),
             Event::UserEvent(UserEvent::Tick) => b.sleep_idle_tabs(),
+            Event::UserEvent(UserEvent::UpdateFound(u)) => {
+                b.ui_js(&format!("updateAvailable({})", js_str(&u.version)));
+                b.update = Some(u);
+            }
+            Event::UserEvent(UserEvent::UpdateDownloaded(result)) => match result.and_then(|path| update::run_installer(&path).map_err(|e| e.to_string())) {
+                // The installer replaces Velocity's files and opens it again: close now (the session is saved).
+                Ok(()) => {
+                    b.shut_down();
+                    *control_flow = ControlFlow::Exit;
+                }
+                Err(e) => b.ui_js(&format!("updateBusy(false,{})", js_str(&e))),
+            },
             Event::RedrawRequested(id) if Some(id) == engine_window => {
                 if let Some(engine) = &b.engine {
                     engine.paint();
