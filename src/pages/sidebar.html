@@ -116,6 +116,12 @@
   #prof i img { width: 100%; height: 100%; object-fit: cover; }
   #prof:hover i { box-shadow: 0 0 0 1.5px var(--hair); }
   #grip { position: fixed; z-index: 1; }
+  /* A newer Velocity is ready (src/update.rs): one click installs it and restarts. */
+  #upd { display: inline-flex; align-items: center; height: 24px; padding: 0 10px; margin: 0 4px; border-radius: 12px;
+    background: var(--accent); color: var(--on-accent, #111); font-weight: 600; font-size: .92em; }
+  #upd[hidden] { display: none; }
+  #upd:hover { filter: brightness(1.1); }
+  #upd[data-busy=true] { opacity: .7; }
 
   /* Sidebar layout */
   [data-layout=side] body { display: grid; grid-template-columns: auto 1fr auto; grid-template-rows: 32px auto auto auto 1fr auto;
@@ -195,6 +201,7 @@
   <div id="foot">
     <button class="ib" id="dl" title="Downloads (Ctrl+J)" aria-label="Downloads" onclick="send('downloads')"><svg viewBox="0 0 24 24"><path d="M12 4v11M7.5 10.5L12 15l4.5-4.5M5 19h14"/></svg><i></i></button>
     <span class="spacer"></span>
+    <button id="upd" hidden onclick="send('update')">Update</button>
     <button class="ib" title="Compact mode (Ctrl+Alt+C)" aria-label="Compact mode" onclick="send('key:compact')"><svg viewBox="0 0 24 24"><rect x="4" y="5" width="16" height="14" rx="2"/><path d="M9.5 5v14"/></svg></button>
     <button class="ib" id="prof" onclick="send('profiles')"><i></i></button>
     <button class="ib" title="Settings (Ctrl+,)" aria-label="Settings" onclick="send('key:settings')"><svg viewBox="0 0 24 24"><path d="M4 7h10M18 7h2M4 17h4M12 17h8"/><circle cx="16" cy="7" r="2"/><circle cx="10" cy="17" r="2"/></svg></button>
@@ -213,6 +220,14 @@
     const img = document.createElement('img'); img.alt = ''; img.src = favicon(u); img.onerror = () => img.style.visibility = 'hidden'; return img;
   };
   function focusUrl() { url.focus(); url.select(); }
+
+  // Called by Rust: a newer Velocity is out; then while it downloads, or why it failed.
+  function updateAvailable(v) { const b = $('upd'); b.hidden = false; b.title = `Velocity ${v} is ready. Click to install it; Velocity restarts.`; }
+  function updateBusy(on, err) {
+    const b = $('upd');
+    b.dataset.busy = on; b.disabled = on; b.textContent = on ? 'Updating…' : 'Update';
+    if (err) b.title = `The update failed (${err}). Click to try again.`;
+  }
 
   // Called by Rust: the strip above the page opened or closed. Leaving this webview closes it again.
   function topPeek(on) { document.documentElement.dataset.toppeek = on; }

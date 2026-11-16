@@ -121,9 +121,11 @@ impl History {
             .collect()
     }
 
-    /// Address bar suggestions: pages whose address starts with what was typed come first
-    /// ("git" finds github.com before a page that merely mentions git), then other matches.
-    pub fn suggest(&self, q: &str, limit: usize) -> Vec<&Entry> {
+    /// Address bar suggestions, as big browsers make them: a site whose name starts with what was
+    /// typed comes first as the site itself ("you" offers youtube.com, not the last video watched
+    /// there), the sites visited most first; then pages whose address starts with it, then other
+    /// matches, newest first.
+    pub fn suggest(&self, q: &str, limit: usize) -> Vec<Suggestion> {
         let q = q.trim().to_lowercase();
         if q.is_empty() {
             return Vec::new();
@@ -132,11 +134,56 @@ impl History {
             let u = u.split_once("://").map_or(u, |(_, r)| r);
             u.strip_prefix("www.").unwrap_or(u).to_lowercase()
         };
-        let mut hits = self.search(&q, 200);
-        hits.sort_by_key(|e| !bare(&e.url).starts_with(&q)); // stable: keeps newest first within each group
-        hits.truncate(limit);
-        hits
+        // Sites: (bare host, its root URL, how many pages of it were visited, newest visit, root title).
+        let mut sites: Vec<(String, String, usize, u64, String)> = Vec::new();
+        if !q.contains(char::is_whitespace) {
+            for e in &self.entries {
+                let rest = bare(&e.url);
+                let host = rest.split(['/', '?', '#']).next().unwrap_or("").to_string();
+                if !host.starts_with(&q) {
+                    continue;
+                }
+                let root = e.url.find("://").map(|i| i + 3).and_then(|start| e.url[start..].find('/').map(|end| &e.url[..start + end + 1])).unwrap_or(&e.url).to_string();
+                let is_root = rest.len() <= host.len() + 1;
+                match sites.iter_mut().find(|s| s.0 == host) {
+                    Some(site) => {
+                        site.2 += 1;
+                        if is_root && site.4.is_empty() {
+                            site.4 = e.title.clone();
+                        }
+                    },
+                    None => sites.push((host.clone(), root, 1, e.ts, if is_root { e.title.clone() } else { String::new() })),
+                }
+            }
+        }
+        sites.sort_by(|a, b| b.2.cmp(&a.2).then(b.3.cmp(&a.3)));
+        let mut out: Vec<Suggestion> = sites
+            .into_iter()
+            .take(3)
+            .map(|(host, url, _, _, title)| Suggestion { title: if title.is_empty() { host.clone() } else { title }, url, complete: Some(host) })
+            .collect();
+        let mut pages = self.search(&q, 200);
+        pages.sort_by_key(|e| !bare(&e.url).starts_with(&q)); // stable: keeps newest first within each group
+        for e in pages {
+            if out.len() >= limit {
+                break;
+            }
+            if !out.iter().any(|s| s.url == e.url) {
+                out.push(Suggestion { url: e.url.clone(), title: e.title.clone(), complete: None });
+            }
+        }
+        out.truncate(limit);
+        out
     }
+}
+
+/// One address bar suggestion; `complete`: a site's name, which the address bar may fill in as
+/// the user types it.
+#[derive(Debug, PartialEq)]
+pub struct Suggestion {
+    pub url: String,
+    pub title: String,
+    pub complete: Option<String>,
 }
 
 #[cfg(test)]
@@ -161,8 +208,11 @@ mod tests {
         assert_eq!(h.entries[0].url, "https://www.rust-lang.org/");
         assert_eq!(h.search("rust github", 10).len(), 1);
         let s = h.suggest("git", 5);
-        assert_eq!(s[0].url, "https://github.com/rust-lang/rust", "address prefix ranks first");
+        assert_eq!(s[0].url, "https://github.com/", "the site itself first");
+        assert_eq!(s[0].complete.as_deref(), Some("github.com"));
+        assert_eq!(s[1].url, "https://github.com/rust-lang/rust", "then its page");
         assert!(h.suggest("  ", 5).is_empty());
+        assert!(h.suggest("rust lang", 5).iter().all(|s| s.complete.is_none()), "words are a search, not a site");
 
         let mut h = h;
         let added = h.import(vec![
@@ -178,6 +228,25 @@ mod tests {
         assert_eq!(History::load(&dir).entries.len(), 1);
         h.clear();
         assert!(History::load(&dir).entries.is_empty());
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn site_before_its_pages() {
+        let dir = std::env::temp_dir().join("velocity-history-sites");
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let mut h = History::load(&dir);
+        h.record("https://www.yourdictionary.com/word", "Word");
+        for v in ["a", "b", "c"] {
+            h.record(&format!("https://www.youtube.com/watch?v={v}"), &format!("Video {v}"));
+        }
+        let s = h.suggest("you", 6);
+        assert_eq!(s[0].url, "https://www.youtube.com/", "the site visited most, not its newest video");
+        assert_eq!((s[0].title.as_str(), s[0].complete.as_deref()), ("youtube.com", Some("youtube.com")));
+        assert_eq!(s[1].url, "https://www.yourdictionary.com/");
+        assert_eq!(s[2].url, "https://www.youtube.com/watch?v=c", "then pages, newest first");
+        assert_eq!(h.suggest("youtube.com/watch", 6)[0].url, "https://www.youtube.com/watch?v=c", "a path is no site name");
         let _ = fs::remove_dir_all(&dir);
     }
 }

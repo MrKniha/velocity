@@ -66,5 +66,13 @@ Root: HKCU; Subkey: "Software\Classes\VelocityURL\shell\open\command"; ValueType
 [Run]
 Filename: "{app}\velocity.exe"; Description: "Open Velocity"; Flags: nowait postinstall skipifsilent
 Filename: "ms-settings:defaultapps?registeredAppUser=Velocity"; Description: "Make Velocity my default browser (opens Windows Settings)"; Flags: shellexec nowait postinstall skipifsilent unchecked
+; An update Velocity started itself (src/update.rs, /UPDATE=1): open it again once installed.
+Filename: "{app}elocity.exe"; Flags: nowait; Check: IsUpdate
+
+[Code]
+function IsUpdate: Boolean;
+begin
+  Result := ExpandConstant('{param:UPDATE|0}') = '1';
+end;
 
 ; Settings, history and profiles in %LOCALAPPDATA%\velocity are kept on uninstall, like other browsers do.

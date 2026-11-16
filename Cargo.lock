@@ -9128,6 +9128,7 @@ dependencies = [
  "serde_json",
  "servo",
  "servo-net",
+ "sha2",
  "stylo_static_prefs",
  "tao",
  "url",
