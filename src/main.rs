@@ -93,9 +93,15 @@ struct Tab {
     shown: std::time::Instant,
 }
 
+/// The tab UI (sidebar or top bar): a page on the engine, or in WebView2 without it (VELOCITY_WEBVIEW2).
+enum Ui {
+    Engine,
+    WebView2(WebView),
+}
+
 struct Browser {
     window: Window,
-    ui: WebView,
+    ui: Ui,
     ctx: WebContext,
     base: PathBuf, // the app's data folder; extensions are shared by all profiles
     dir: PathBuf,  // this profile's folder
@@ -505,7 +511,7 @@ impl Browser {
         let cur = &self.tabs[self.active];
         let profile = if self.profile == profiles::DEFAULT { String::new() } else { format!(" ({})", self.profile) };
         self.window.set_title(&format!("{} - {APP}{profile}", cur.title));
-        let _ = self.ui.evaluate_script(&format!(
+        self.ui_js(&format!(
             "render([{}],{},[{}],{},{})",
             tabs.join(","),
             cur.id,
@@ -514,6 +520,49 @@ impl Browser {
             format!("{{n:{},a:{}}}", js_str(&self.profile), js_str(&profiles::avatar(&self.base, &self.profile)))
         ));
         self.push_frame();
+    }
+
+    fn ui_js(&self, js: &str) {
+        match (&self.ui, &self.engine) {
+            (Ui::WebView2(v), _) => drop(v.evaluate_script(js)),
+            (Ui::Engine, Some(engine)) => engine.ui_js(js),
+            (Ui::Engine, None) => {}
+        }
+    }
+
+    fn ui_bounds(&self, bounds: Rect) {
+        match (&self.ui, &self.engine) {
+            (Ui::WebView2(v), _) => drop(v.set_bounds(bounds)),
+            (Ui::Engine, Some(engine)) => {
+                let scale = self.window.scale_factor();
+                let (p, size) = (bounds.position.to_physical::<i32>(scale), bounds.size.to_physical::<u32>(scale));
+                engine.ui_bounds(p.x, p.y, size.width, size.height);
+            }
+            (Ui::Engine, None) => {}
+        }
+    }
+
+    fn ui_visible(&self, on: bool) {
+        match (&self.ui, &self.engine) {
+            (Ui::WebView2(v), _) => drop(v.set_visible(on)),
+            (Ui::Engine, Some(engine)) => engine.ui_visible(on),
+            (Ui::Engine, None) => {}
+        }
+    }
+
+    fn ui_hwnd(&self) -> Option<HWND> {
+        match (&self.ui, &self.engine) {
+            (Ui::WebView2(v), _) => host_hwnd(v),
+            (Ui::Engine, engine) => engine.as_ref().and_then(|e| e.ui_hwnd()).map(|h| HWND(h as _)),
+        }
+    }
+
+    fn ui_focus(&self) {
+        match (&self.ui, &self.engine) {
+            (Ui::WebView2(v), _) => drop(v.focus()),
+            (Ui::Engine, Some(engine)) => engine.ui_focus(),
+            (Ui::Engine, None) => {}
+        }
     }
 
     fn sidebar_shown(&self) -> bool {
@@ -533,7 +582,7 @@ impl Browser {
     fn layout(&self) {
         if self.fullscreen {
             let (w, h) = logical_size(&self.window);
-            let _ = self.ui.set_visible(false);
+            self.ui_visible(false);
             let full = rect((0.0, 0.0, w, h));
             if let Some(view) = self.current() {
                 let _ = view.set_bounds(full);
@@ -546,12 +595,12 @@ impl Browser {
             bring_to_top(hwnd);
             return;
         }
-        let _ = self.ui.set_bounds(self.sidebar_bounds());
-        let _ = self.ui.set_visible(self.sidebar_shown());
+        self.ui_bounds(self.sidebar_bounds());
+        self.ui_visible(self.sidebar_shown());
         if self.peeking {
-            bring_to_top(host_hwnd(&self.ui)); // in compact mode the sidebar overlays the page
+            bring_to_top(self.ui_hwnd()); // in compact mode the sidebar overlays the page
         } else {
-            send_to_bottom(host_hwnd(&self.ui)); // under every page again (it spans the window with window glass)
+            send_to_bottom(self.ui_hwnd()); // under every page again (it spans the window with window glass)
         }
         let b = self.content_bounds();
         for view in self.tabs.iter().filter_map(|t| t.view.as_ref()).chain(self.settings_view.as_ref()) {
@@ -640,7 +689,7 @@ impl Browser {
     /// Progress ring on the downloads button, and the list if the Downloads page is open.
     fn refresh_downloads(&self) {
         let (running, pct) = self.downloads.progress();
-        let _ = self.ui.evaluate_script(&format!("downloadsBadge({running},{pct},{})", self.downloads_unseen));
+        self.ui_js(&format!("downloadsBadge({running},{pct},{})", self.downloads_unseen));
         let items: Vec<String> = self
             .downloads
             .items
@@ -798,7 +847,7 @@ impl Browser {
 
     fn push_frame(&self) {
         let js = format!("window.velocityFrame&&velocityFrame({})", self.frame_js());
-        let _ = self.ui.evaluate_script(&js);
+        self.ui_js(&js);
         for view in self.tabs.iter().filter(|t| t.url.is_empty()).filter_map(|t| t.view.as_ref()) {
             let _ = view.evaluate_script(&js);
         }
@@ -1003,7 +1052,12 @@ impl Browser {
         if what.contains('c') && b.has_cookies() {
             match import::firefox_cookies(&b) {
                 Ok(c) => {
-                    let n = import::add_cookies(&self.ui, &c);
+                    // WebView2's cookie store, through any of its webviews (the settings panel runs the import).
+                    let wv2 = match &self.ui {
+                        Ui::WebView2(v) => Some(v),
+                        Ui::Engine => self.settings_view.as_ref().or_else(|| self.tabs.iter().find_map(|t| t.view.as_ref())),
+                    };
+                    let n = wv2.map_or(0, |v| import::add_cookies(v, &c));
                     // Web pages render on the engine: it gets the logins too.
                     let n = self.engine.as_ref().map_or(n, |engine| engine.import_cookies(&c).max(n));
                     done.push(format!("{n} cookies (sites you were logged in to)"))
@@ -1038,7 +1092,9 @@ impl Browser {
         downloads::set_ask(self.settings.ask_download);
         let (r, g, b) = self.settings.frame_rgb();
         self.window.set_background_color(Some((r, g, b, 255)));
-        let _ = self.ui.set_background_color((r, g, b, 255));
+        if let Ui::WebView2(v) = &self.ui {
+            let _ = v.set_background_color((r, g, b, 255));
+        }
         self.update_opacity();
         let card = self.settings.card_rgba();
         for t in self.tabs.iter().filter(|t| t.url.is_empty()).filter_map(|t| t.view.as_ref()).chain(self.settings_view.as_ref()) {
@@ -1080,8 +1136,8 @@ impl Browser {
             }
             "focus" => {
                 self.set_peek(true);
-                let _ = self.ui.focus();
-                let _ = self.ui.evaluate_script("focusUrl()");
+                self.ui_focus();
+                self.ui_js("focusUrl()");
             }
             _ => {}
         }
@@ -1129,7 +1185,7 @@ impl Browser {
             }
             ("downloads", _) => Ok(self.open_downloads()),
             ("toppeek", _) => Ok(self.set_top_peek(arg == "1")),
-            ("suggest", _) => self.ui.evaluate_script(&self.suggestions_js(arg)),
+            ("suggest", _) => Ok(self.ui_js(&self.suggestions_js(arg))),
             ("sugg", _) => Ok(self.suggest_space(arg.parse().unwrap_or(0.0))),
             ("win", _) => match arg {
                 "min" => Ok(self.window.set_minimized(true)),
@@ -1159,8 +1215,8 @@ impl Browser {
             let (w, h) = logical_size(&self.window);
             let scale = self.settings.ui_scale as f64 / 100.0;
             let bar = TOP_BAR * scale;
-            let _ = self.ui.set_bounds(rect((0.0, 0.0, w, (bar + extra * scale).min(h))));
-            bring_to_top(host_hwnd(&self.ui));
+            self.ui_bounds(rect((0.0, 0.0, w, (bar + extra * scale).min(h))));
+            bring_to_top(self.ui_hwnd());
         } else {
             bring_to_top(self.tab_hwnd(self.active)); // with window glass the tab UI lies under the page
             self.show_settings_if_owner();
@@ -1175,7 +1231,7 @@ impl Browser {
         }
         self.top_peek = on;
         self.layout();
-        let _ = self.ui.evaluate_script(&format!("topPeek({on})"));
+        self.ui_js(&format!("topPeek({on})"));
         // The tab UI spans the window under the page while the strip shows; keep the page in front.
         bring_to_top(self.tab_hwnd(self.active));
         self.show_settings_if_owner();
@@ -1184,8 +1240,8 @@ impl Browser {
     /// Window opacity, except while the shown tab plays a video or sound or is full screen: then it's solid.
     fn update_opacity(&self) {
         let busy = self.fullscreen || self.tabs.get(self.active).is_some_and(|t| self.playing.contains(&t.id));
-        // A layered (see-through) window doesn't show the engine's GPU-drawn page at all.
-        let busy = busy || self.on_engine().is_some();
+        // A layered (see-through) window doesn't show the engine's GPU-drawn pages (or its tab UI) at all.
+        let busy = busy || self.on_engine().is_some() || matches!(self.ui, Ui::Engine);
         set_opacity(&self.window, if busy { 100 } else { self.settings.opacity });
     }
 
@@ -1716,33 +1772,23 @@ fn main() -> wry::Result<()> {
     // One shared profile = one WebView2 process tree; all webviews must then use the same extension settings.
     let mut ctx = WebContext::new(Some(dir.join("profile")));
     let proxy = event_loop.create_proxy();
-    let ui_proxy = proxy.clone();
-    let ui = WebViewBuilder::new_with_web_context(&mut ctx)
-        .with_html(include_str!("pages/sidebar.html"))
-        .with_initialization_script(THEME_JS)
-        .with_initialization_script(SUGGEST_JS)
-        .with_background_color((r, g, b, 255))
-        .with_browser_extensions_enabled(true)
-        .with_ipc_handler(move |req| {
-            let _ = ui_proxy.send_event(UserEvent::Ui(req.body().clone()));
-        })
-        .build_as_child(&window)?;
-    media::map(&ui, media::BG_HOST, &media::bg_dir(&dir)); // window glass shows the wallpaper in the tab UI too
-    media::map(&ui, profiles::AVATAR_HOST, &profiles::avatars_dir(&base));
-    memory_target(&ui, true); // the tab UI is small: WebView2 may trim its caches
-    // With window glass the tab UI spans the window under the pages. Its window didn't clip its
-    // siblings, so it drew over the engine's page (above it in z-order): the page stayed blank.
-    if let Some(hwnd) = host_hwnd(&ui) {
-        use windows::Win32::UI::WindowsAndMessaging::{GWL_STYLE, WS_CLIPSIBLINGS};
-        unsafe {
-            SetWindowLongPtrW(hwnd, GWL_STYLE, GetWindowLongPtrW(hwnd, GWL_STYLE) | WS_CLIPSIBLINGS.0 as isize);
-        }
-    }
-
-    let essentials = load_essentials(&dir);
     let engine = std::env::var_os("VELOCITY_WEBVIEW2")
         .is_none()
         .then(|| engine::Engine::new(&window, &event_loop, proxy.clone(), &dir.join("engine"), &base.join("extensions").join("uBOLite")));
+    let ui = match &engine {
+        // VELOCITY_WEBVIEW2_UI=1: the tab UI in WebView2, pages still on the engine.
+        Some(engine) if std::env::var_os("VELOCITY_WEBVIEW2_UI").is_none() => {
+            let files = vec![
+                (media::BG_HOST.to_string(), media::bg_dir(&dir)), // window glass shows the wallpaper in the tab UI too
+                (profiles::AVATAR_HOST.to_string(), profiles::avatars_dir(&base)),
+            ];
+            engine.open_ui(&window, &event_loop, include_str!("pages/sidebar.html"), &[THEME_JS, SUGGEST_JS], files);
+            Ui::Engine
+        }
+        _ => Ui::WebView2(wv2_ui(&window, &mut ctx, &dir, &base, proxy.clone(), (r, g, b))?),
+    };
+
+    let essentials = load_essentials(&dir);
     let mut b = Browser {
         window, ui, ctx, base, dir, profile, history, downloads, downloads_unseen: false, close_after: Vec::new(), proxy, tabs: Vec::new(), active: 0, next_id: 1, essentials, settings,
         settings_view: None, settings_tab: None, peeking: false, minimized: false, fullscreen: false, playing: Default::default(), top_peek: false, we_dirs: Vec::new(), wallpapers: Vec::new(), arrange_next: false, settings_page: "",
@@ -1767,6 +1813,7 @@ fn main() -> wry::Result<()> {
     event_loop.run(move |event, _, control_flow| {
         *control_flow = ControlFlow::Wait;
         let engine_window = b.engine.as_ref().map(|e| e.window_id());
+        let ui_window = b.engine.as_ref().and_then(|e| e.ui_window_id());
         match event {
             Event::UserEvent(UserEvent::Engine) => {
                 if let Some(engine) = &b.engine {
@@ -1779,6 +1826,17 @@ fn main() -> wry::Result<()> {
             Event::RedrawRequested(id) if Some(id) == engine_window => {
                 if let Some(engine) = &b.engine {
                     engine.paint();
+                }
+            }
+            Event::RedrawRequested(id) if Some(id) == ui_window => {
+                if let Some(engine) = &b.engine {
+                    engine.paint_ui();
+                }
+            }
+            Event::WindowEvent { window_id, event, .. } if Some(window_id) == ui_window => {
+                let key = b.engine.as_ref().and_then(|e| e.handle_ui(&event));
+                if let Some(key) = key {
+                    b.shortcut(key);
                 }
             }
             Event::WindowEvent { window_id, event, .. } if Some(window_id) == engine_window => {
@@ -1869,6 +1927,33 @@ fn main() -> wry::Result<()> {
             _ => {}
         }
     });
+}
+
+/// The tab UI in WebView2, when the engine is off (VELOCITY_WEBVIEW2).
+fn wv2_ui(window: &Window, ctx: &mut WebContext, dir: &Path, base: &Path, proxy: EventLoopProxy<UserEvent>, rgb: (u8, u8, u8)) -> wry::Result<WebView> {
+    let ui = WebViewBuilder::new_with_web_context(ctx)
+        .with_html(include_str!("pages/sidebar.html"))
+        .with_initialization_script(THEME_JS)
+        .with_initialization_script(SUGGEST_JS)
+        .with_background_color((rgb.0, rgb.1, rgb.2, 255))
+        .with_browser_extensions_enabled(true)
+        .with_ipc_handler(move |req| {
+            let _ = proxy.send_event(UserEvent::Ui(req.body().clone()));
+        })
+        .build_as_child(window)?;
+    media::map(&ui, media::BG_HOST, &media::bg_dir(&dir)); // window glass shows the wallpaper in the tab UI too
+    media::map(&ui, profiles::AVATAR_HOST, &profiles::avatars_dir(&base));
+    memory_target(&ui, true); // the tab UI is small: WebView2 may trim its caches
+    // With window glass the tab UI spans the window under the pages. Its window didn't clip its
+    // siblings, so it drew over the engine's page (above it in z-order): the page stayed blank.
+    if let Some(hwnd) = host_hwnd(&ui) {
+        use windows::Win32::UI::WindowsAndMessaging::{GWL_STYLE, WS_CLIPSIBLINGS};
+        unsafe {
+            SetWindowLongPtrW(hwnd, GWL_STYLE, GetWindowLongPtrW(hwnd, GWL_STYLE) | WS_CLIPSIBLINGS.0 as isize);
+        }
+    }
+
+    Ok(ui)
 }
 
 /// Minimal JS string literal escape for passing page data into the UI.
