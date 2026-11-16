@@ -8,11 +8,11 @@
 use std::path::PathBuf;
 use std::process::Command;
 
-/// The GitHub repository ("owner/name") releases come from. Empty: updates are off.
-/// `VELOCITY_UPDATE_REPO` at build time overrides it.
+/// The GitHub repository ("owner/name") releases come from; `VELOCITY_UPDATE_REPO` at build time
+/// overrides it (empty: updates off).
 const REPO: &str = match option_env!("VELOCITY_UPDATE_REPO") {
     Some(repo) => repo,
-    None => "",
+    None => "MrKniha/velocity",
 };
 
 #[derive(Clone, Debug)]
