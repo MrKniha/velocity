@@ -42,6 +42,21 @@ use wry::{
 };
 
 const APP: &str = "Velocity";
+/// What a page in tab `id` asks for through `window.ipc.postMessage`: only shortcuts and
+/// "navigate this same tab" (and the new tab page's own requests).
+fn page_message(id: u32, body: &str) -> Option<UserEvent> {
+    if let Some(k) = body.strip_prefix("key:") {
+        Some(UserEvent::PageKey(k.to_string()))
+    } else if let Some(q) = body.strip_prefix("nav:") {
+        Some(UserEvent::PageNav(id, q.to_string()))
+    } else if let Some(p) = body.strip_prefix("ntpos:") {
+        // Dragging on the new tab page; worst case a site rearranges the user's new tab layout.
+        Some(UserEvent::PagePos(p.to_string()))
+    } else {
+        body.strip_prefix("suggest:").map(|q| UserEvent::PageSuggest(id, q.to_string()))
+    }
+}
+
 /// Marker for the built-in new-tab page (pages/newtab.html); never sent to the network.
 const NEW_TAB: &str = "velocity:newtab";
 const DEFAULT_ESSENTIALS: &[&str] = &["https://github.com", "https://www.youtube.com", "https://www.wikipedia.org"];
@@ -151,7 +166,7 @@ impl Browser {
             .map(|(k, name, f, c, t, a)| format!("['{k}','{name}','{f}','{c}','{t}','{a}']"))
             .collect();
         format!(
-            "if(!/^https?:$/.test(location.protocol)){{{THEME_JS}{SUGGEST_JS}window.VELOCITY={};window.ESSENTIALS=[{}];window.ENGINES=[{}];window.PRESETS=[{}];window.FRAME={};window.ARRANGE={};window.START_PAGE='{}';}}",
+            "if(!/^https?:$/.test(location.protocol)||location.host==='newtab.velocity.invalid'){{{THEME_JS}{SUGGEST_JS}window.VELOCITY={};window.ESSENTIALS=[{}];window.ENGINES=[{}];window.PRESETS=[{}];window.FRAME={};window.ARRANGE={};window.START_PAGE='{}';}}",
             self.settings.to_js(),
             essentials.join(","),
             engines.join(","),
@@ -162,6 +177,23 @@ impl Browser {
         )
     }
 
+    /// Run `js` in tab `index` if it shows the new tab page (WebView2's or the engine's).
+    fn newtab_js(&self, index: usize, js: &str) {
+        let Some(tab) = self.tabs.get(index).filter(|t| t.url.is_empty()) else { return };
+        match (&tab.view, &self.engine) {
+            (Some(view), _) => drop(view.evaluate_script(js)),
+            (None, Some(engine)) => engine.newtab_js(tab.id, js),
+            _ => {}
+        }
+    }
+
+    /// Run `js` in every new tab page.
+    fn newtabs_js(&self, js: &str) {
+        for i in 0..self.tabs.len() {
+            self.newtab_js(i, js);
+        }
+    }
+
     fn open_tab(&mut self, url: &str) {
         self.add_tab(url, None);
     }
@@ -170,17 +202,19 @@ impl Browser {
     fn add_tab(&mut self, url: &str, restored: Option<String>) {
         let id = self.next_id;
         self.next_id += 1;
-        if url != NEW_TAB && self.engine.is_some() && !needs_webview2(url) {
+        if self.engine.is_some() && !needs_webview2(url) {
             let pending = restored.is_some().then(|| url.to_string());
             let title = restored.unwrap_or_else(|| "New tab".into());
+            let shown_url = if url == NEW_TAB { String::new() } else { url.to_string() };
+            self.tabs.push(Tab { id, title, url: shown_url, view: None, unseen: false, pending: pending.clone(), shown: std::time::Instant::now() });
             if pending.is_none() {
-                let zoom = self.zoom();
-                self.engine.as_mut().expect("engine").load(id, url, zoom);
-            }
-            let waiting = pending.is_some();
-            self.tabs.push(Tab { id, title, url: url.to_string(), view: None, unseen: false, pending, shown: std::time::Instant::now() });
-            if !waiting {
+                self.navigate(self.tabs.len() - 1, url);
                 self.activate(self.tabs.len() - 1);
+                if url == NEW_TAB {
+                    if let Some(engine) = &self.engine {
+                        engine.focus(); // type into the centred search bar straight away
+                    }
+                }
             }
             return;
         }
@@ -220,16 +254,8 @@ impl Browser {
             .with_initialization_script_for_main_only(if new_tab { init } else { String::new() }, true)
             // Pages can post anything: only shortcuts and "navigate this same tab" are accepted from them.
             .with_ipc_handler(move |req| {
-                let body = req.body();
-                if let Some(k) = body.strip_prefix("key:") {
-                    let _ = p1.send_event(UserEvent::PageKey(k.to_string()));
-                } else if let Some(q) = body.strip_prefix("nav:") {
-                    let _ = p1.send_event(UserEvent::PageNav(id, q.to_string()));
-                } else if let Some(p) = body.strip_prefix("ntpos:") {
-                    // Dragging on the new tab page; worst case a site rearranges the user's new tab layout.
-                    let _ = p1.send_event(UserEvent::PagePos(p.to_string()));
-                } else if let Some(q) = body.strip_prefix("suggest:") {
-                    let _ = p1.send_event(UserEvent::PageSuggest(id, q.to_string()));
+                if let Some(event) = page_message(id, req.body()) {
+                    let _ = p1.send_event(event);
                 }
             })
             .with_on_page_load_handler(move |ev, url| {
@@ -270,6 +296,14 @@ impl Browser {
     fn navigate(&mut self, index: usize, url: &str) {
         let id = self.tabs[index].id;
         let zoom = self.zoom();
+        if url == NEW_TAB && self.engine.is_some() {
+            let (init, zoom) = (self.page_init_js(), self.zoom());
+            if let Some(engine) = self.engine.as_mut() {
+                engine.load_newtab(id, include_str!("pages/newtab.html"), init, zoom);
+                self.tabs[index].view = None;
+                return;
+            }
+        }
         match self.engine.as_mut() {
             Some(engine) if !needs_webview2(url) && (engine.has(id) || url.starts_with("http")) => {
                 engine.load(id, url, zoom);
@@ -313,7 +347,7 @@ impl Browser {
         for (i, tab) in self.tabs.iter_mut().enumerate() {
             if i != self.active && engine.has(tab.id) && !self.playing.contains(&tab.id) && tab.shown.elapsed() >= SLEEP_AFTER {
                 engine.close(tab.id);
-                tab.pending = Some(tab.url.clone());
+                tab.pending = Some(if tab.url.is_empty() { NEW_TAB.to_string() } else { tab.url.clone() });
             }
         }
     }
@@ -463,8 +497,9 @@ impl Browser {
         self.sync_ui();
         let list: Vec<String> = self.essentials.iter().map(|e| js_str(e)).collect();
         let js = format!("renderEssentials([{}])", list.join(","));
-        for view in self.tabs.iter().filter(|t| t.url.is_empty()).filter_map(|t| t.view.as_ref()).chain(self.settings_view.as_ref()) {
-            let _ = view.evaluate_script(&js);
+        self.newtabs_js(&js);
+        if let Some(v) = &self.settings_view {
+            let _ = v.evaluate_script(&js);
         }
     }
 
@@ -856,9 +891,7 @@ impl Browser {
     fn push_frame(&self) {
         let js = format!("window.velocityFrame&&velocityFrame({})", self.frame_js());
         self.ui_js(&js);
-        for view in self.tabs.iter().filter(|t| t.url.is_empty()).filter_map(|t| t.view.as_ref()) {
-            let _ = view.evaluate_script(&js);
-        }
+        self.newtabs_js(&js);
     }
 
     fn handle_setting(&mut self, msg: &str) {
@@ -888,9 +921,7 @@ impl Browser {
                 // Close settings and put the new tab page into arrange mode (opening one if needed).
                 self.close_settings();
                 if self.tabs[self.active].url.is_empty() {
-                    if let Some(view) = self.current() {
-                        let _ = view.evaluate_script("arrange(true)");
-                    }
+                    self.newtab_js(self.active, "arrange(true)");
                 } else {
                     self.arrange_next = true;
                     self.open_tab(NEW_TAB);
@@ -1121,9 +1152,7 @@ impl Browser {
         self.layout();
         self.sync_ui();
         let js = format!("applySettings({})", self.settings.to_js());
-        for view in self.tabs.iter().filter(|t| t.url.is_empty()).filter_map(|t| t.view.as_ref()) {
-            let _ = view.evaluate_script(&js);
-        }
+        self.newtabs_js(&js);
         if let Some(v) = &self.settings_view {
             let _ = v.evaluate_script(&js);
         }
@@ -1919,6 +1948,11 @@ fn main() -> wry::Result<()> {
                     b.shortcut(key);
                 }
             }
+            Event::WindowEvent { window_id, event: WindowEvent::Focused(true), .. } if window_id == b.window.id() => {
+                if let Some(engine) = b.on_engine() {
+                    engine.refocus();
+                }
+            }
             Event::WindowEvent { event: WindowEvent::CloseRequested, .. } => {
                 b.shut_down();
                 *control_flow = ControlFlow::Exit
@@ -1983,8 +2017,8 @@ fn main() -> wry::Result<()> {
             }
             Event::UserEvent(UserEvent::PageSuggest(id, q)) => {
                 // Only our new tab page gets history; once the tab shows a site, the site could read the reply.
-                if let Some(view) = b.index_of(id).map(|i| &b.tabs[i]).filter(|t| t.url.is_empty()).and_then(|t| t.view.as_ref()) {
-                    let _ = view.evaluate_script(&b.suggestions_js(&q));
+                if let Some(i) = b.index_of(id) {
+                    b.newtab_js(i, &b.suggestions_js(&q));
                 }
             }
             // Cloudflare's "checking your browser" page, which the engine doesn't pass.

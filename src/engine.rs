@@ -8,7 +8,7 @@
 //! there. Web content runs in separate, locked-down Low-integrity processes (`sandbox.rs`).
 
 use std::cell::{Cell, OnceCell, RefCell};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::{Arc, Mutex};
@@ -25,6 +25,9 @@ use servo::{
 /// Where the tab UI page is served from (`load_web_resource`; never reaches the network).
 const UI_HOST: &str = "ui.velocity.invalid";
 
+/// Where the new tab page is served from, for tabs on the engine.
+const NEWTAB_HOST: &str = "newtab.velocity.invalid";
+
 /// Runs in the tab UI page: `window.ipc.postMessage` as in WebView2 (wry). Messages go out as
 /// console messages starting with \u{1}, which only the UI's WebView is listened to for; "ready"
 /// once the page's own script has run, so Rust's calls into it can start.
@@ -34,6 +37,19 @@ document.addEventListener('DOMContentLoaded', () => {
   const s = document.createElement('style');
   s.textContent = 'html { background: var(--frame) !important; }';
   document.head.append(s);
+  console.log('\u0001\u0001ready');
+});"#;
+
+/// The new tab page's `window.ipc.postMessage`, only while the tab shows that page (a site loaded
+/// later in the same tab gets a fresh WebView anyway, `Engine::load`).
+const NEWTAB_IPC_JS: &str = r#"if (location.host === 'newtab.velocity.invalid') {
+  window.ipc = { postMessage: m => console.log('\u0001' + m) };
+  // The engine doesn't act on `autofocus`: the search field takes the keys once the page is there.
+  document.addEventListener('DOMContentLoaded', () => document.querySelector('[autofocus]')?.focus());
+}"#;
+
+/// Our own pages on the engine (tab UI, new tab page):
+const SVG_JS: &str = r#"document.addEventListener('DOMContentLoaded', () => {
   // The engine draws inline SVG from its attributes only, not from CSS: the icons' stroke and fill
   // become attributes (the colour as computed now), again whenever the UI or its theme changes.
   const icons = () => {
@@ -52,7 +68,6 @@ document.addEventListener('DOMContentLoaded', () => {
   document.addEventListener('mouseover', queue);
   document.addEventListener('mouseout', queue);
   icons();
-  console.log('\u0001\u0001ready');
 });"#;
 
 /// Runs in every page on the engine: links the stylesheet that hides the boxes blocked ads leave
@@ -170,6 +185,9 @@ struct Inner {
     /// Scripts every page runs (the cosmetic filters' stylesheet link).
     user_content: Rc<UserContentManager>,
     ui: OnceCell<Ui>,
+    /// WebViews showing the new tab page, and that page.
+    newtabs: RefCell<HashSet<WebViewId>>,
+    newtab_html: Cell<&'static str>,
 }
 
 pub struct Engine {
@@ -184,6 +202,8 @@ pub struct Engine {
     /// Test mode (`screenshot_path`): when the screenshots are due, and which were saved (1 page, 2 UI).
     shot_due: Option<std::time::Instant>,
     shots: Cell<u8>,
+    /// Whether the tab UI (not the page) had the keys last: they go back there when the window is active again.
+    keys_on_ui: Cell<bool>,
 }
 
 /// Test mode: `VELOCITY_SCREENSHOT=<file.png>` saves the page there and the tab UI as
@@ -264,6 +284,8 @@ impl Engine {
             popups: RefCell::new(Vec::new()),
             delegate: RefCell::new(None),
             ui: OnceCell::new(),
+            newtabs: RefCell::new(HashSet::new()),
+            newtab_html: Cell::new(""),
         });
         let delegate: Rc<dyn WebViewDelegate> = Rc::new(Delegate(Rc::downgrade(&inner)));
         *inner.delegate.borrow_mut() = Some(delegate);
@@ -279,7 +301,7 @@ impl Engine {
             });
             std::time::Instant::now() + std::time::Duration::from_secs(delay)
         });
-        Engine { servo, downloads, inner, pages: HashMap::new(), active: None, cursor: Cell::new(DevicePoint::default()), modifiers: Cell::new(Modifiers::empty()), shot_due, shots: Cell::new(0) }
+        Engine { servo, downloads, inner, pages: HashMap::new(), active: None, cursor: Cell::new(DevicePoint::default()), modifiers: Cell::new(Modifiers::empty()), shot_due, shots: Cell::new(0), keys_on_ui: Cell::new(false) }
     }
 
     pub fn window_id(&self) -> WindowId {
@@ -304,7 +326,7 @@ impl Engine {
         let handle = window.window_handle().expect("window handle");
         let context = Rc::new(WindowRenderingContext::new(display, handle, window.inner_size()).expect("GL context for the UI"));
         let user_content = Rc::new(UserContentManager::new(&self.servo));
-        for js in std::iter::once(UI_IPC_JS).chain(scripts.iter().copied()) {
+        for js in [UI_IPC_JS, SVG_JS].into_iter().chain(scripts.iter().copied()) {
             user_content.add_script(Rc::new(UserScript::new(js.into(), None)));
         }
         let scale = Scale::new(window.scale_factor() as f32);
@@ -372,7 +394,8 @@ impl Engine {
     /// Keys go to the tab UI.
     pub fn ui_focus(&self) {
         let Some(ui) = self.inner.ui.get() else { return };
-        ui.window.set_focus();
+        set_focus(&ui.window);
+        self.keys_on_ui.set(true);
         if let Some(webview) = ui.webview.get() {
             webview.set_focused(true);
         }
@@ -438,14 +461,56 @@ impl Engine {
     /// Show `url` in tab `tab`, creating its page on first use.
     pub fn load(&mut self, tab: u32, url: &str, zoom: f32) {
         let Ok(url) = Url::parse(url) else { return };
+        if self.is_newtab(tab) {
+            // Its scripts (settings, Essentials, the message channel) must not reach a site.
+            self.drop_page(tab);
+        }
         if let Some(page) = self.pages.get(&tab) {
             page.webview.load(url);
             return;
         }
         let servo = &self.servo;
-        let page = self.inner.page(|context| WebViewBuilder::new(servo, context).url(url));
+        let page = self.inner.page(|context| WebViewBuilder::new(servo, context).url(url), None);
         page.webview.set_page_zoom(zoom);
         self.add(tab, page);
+    }
+
+    /// Show the new tab page `html` in tab `tab` (a fresh WebView), with `init` (its settings and
+    /// Essentials) run before the page's own script.
+    pub fn load_newtab(&mut self, tab: u32, html: &'static str, init: String, zoom: f32) {
+        self.drop_page(tab);
+        self.inner.newtab_html.set(html);
+        let user_content = Rc::new(UserContentManager::new(&self.servo));
+        for js in [NEWTAB_IPC_JS.to_string(), SVG_JS.to_string(), init] {
+            user_content.add_script(Rc::new(UserScript::new(js, None)));
+        }
+        let servo = &self.servo;
+        let url = Url::parse(&format!("https://{NEWTAB_HOST}/")).unwrap();
+        let page = self.inner.page(|context| WebViewBuilder::new(servo, context).url(url), Some(user_content));
+        page.webview.set_page_zoom(zoom);
+        self.inner.newtabs.borrow_mut().insert(page.webview.id());
+        self.add(tab, page);
+        if self.active == Some(tab) {
+            self.activate(Some(tab));
+        }
+    }
+
+    pub fn is_newtab(&self, tab: u32) -> bool {
+        self.pages.get(&tab).is_some_and(|p| self.inner.newtabs.borrow().contains(&p.webview.id()))
+    }
+
+    /// Run `js` in tab `tab` if it shows the new tab page.
+    pub fn newtab_js(&self, tab: u32, js: &str) {
+        if let Some(page) = self.pages.get(&tab).filter(|p| self.inner.is_newtab(&p.webview)) {
+            page.webview.evaluate_javascript(js, |_| {});
+        }
+    }
+
+    /// Run `js` in every new tab page.
+    pub fn all_newtabs_js(&self, js: &str) {
+        for tab in self.pages.keys() {
+            self.newtab_js(*tab, js);
+        }
     }
 
     /// Popups Servo opened since the last call; `tab_for` gives each its new tab id.
@@ -467,10 +532,16 @@ impl Engine {
         self.pages.insert(tab, page);
     }
 
-    pub fn close(&mut self, tab: u32) {
+    /// Tab `tab`'s WebView goes away; the tab stays as it is.
+    fn drop_page(&mut self, tab: u32) {
         if let Some(page) = self.pages.remove(&tab) {
             self.inner.tabs.borrow_mut().remove(&page.webview.id());
+            self.inner.newtabs.borrow_mut().remove(&page.webview.id());
         }
+    }
+
+    pub fn close(&mut self, tab: u32) {
+        self.drop_page(tab);
         if self.active == Some(tab) {
             self.active = None;
             let _ = self.inner.window.set_visible(false);
@@ -554,9 +625,16 @@ impl Engine {
         let _ = self.active_webview().map(|w| w.exit_fullscreen());
     }
 
+    /// Velocity's window is active again (Windows gave the keys to the top-level window): back to
+    /// the address bar or the page, whichever had them.
+    pub fn refocus(&self) {
+        if self.keys_on_ui.get() { self.ui_focus() } else { self.focus() }
+    }
+
     /// Keys go to the page (the engine window has keyboard focus).
     pub fn focus(&self) {
-        self.inner.window.set_focus();
+        set_focus(&self.inner.window);
+        self.keys_on_ui.set(false);
         let _ = self.active_webview().map(|w| w.set_focused(true));
     }
 
@@ -695,6 +773,16 @@ fn place(window: &Window, x: i32, y: i32, size: PhysicalSize<u32>, corner: i32) 
     resized
 }
 
+/// Keyboard focus to child window `window`. tao's `set_focus` only brings top-level windows to the
+/// front (SetForegroundWindow, which fails for a child, then a fake Alt press), so keys never moved.
+fn set_focus(window: &Window) {
+    use tao::platform::windows::WindowExtWindows;
+    use windows::Win32::{Foundation::HWND, UI::Input::KeyboardAndMouse::SetFocus};
+    unsafe {
+        let _ = SetFocus(Some(HWND(window.hwnd() as _)));
+    }
+}
+
 /// Drawing in a child window must not cover the sibling windows over it (the page over the UI).
 fn clip_siblings(hwnd: isize) {
     use windows::Win32::{Foundation::HWND, UI::WindowsAndMessaging::{GetWindowLongPtrW, SetWindowLongPtrW, GWL_STYLE, WS_CLIPSIBLINGS}};
@@ -713,14 +801,15 @@ pub fn set_style_prefs() {
 }
 
 impl Inner {
-    fn page(&self, builder: impl FnOnce(Rc<dyn RenderingContext>) -> WebViewBuilder) -> Page {
+    /// `scripts`: the page's own user scripts instead of every page's (the cosmetic filters).
+    fn page(&self, builder: impl FnOnce(Rc<dyn RenderingContext>) -> WebViewBuilder, scripts: Option<Rc<UserContentManager>>) -> Page {
         let size = self.window.inner_size();
         let context = Rc::new(self.context.offscreen_context(size));
         let delegate = self.delegate.borrow().clone().expect("delegate set");
         let webview = builder(context.clone())
             .hidpi_scale_factor(Scale::new(self.window.scale_factor() as f32))
             .delegate(delegate)
-            .user_content_manager(self.user_content.clone())
+            .user_content_manager(scripts.unwrap_or_else(|| self.user_content.clone()))
             .build();
         // Pages follow the Windows light or dark setting, as they do in WebView2.
         webview.notify_theme_change(match self.window.theme() {
@@ -728,6 +817,11 @@ impl Inner {
             _ => servo::Theme::Light,
         });
         Page { webview, context }
+    }
+
+    /// Whether `webview` shows our new tab page now (not a site it went on to).
+    fn is_newtab(&self, webview: &WebView) -> bool {
+        self.newtabs.borrow().contains(&webview.id()) && webview.url().is_some_and(|u| u.host_str() == Some(NEWTAB_HOST))
     }
 
     fn tab_of(&self, webview: &WebView) -> Option<u32> {
@@ -751,9 +845,20 @@ impl WebViewDelegate for Delegate {
     /// The tab UI's page and the local files it shows; every other load goes on as usual.
     fn load_web_resource(&self, webview: WebView, load: WebResourceLoad) {
         let Some(inner) = self.0.upgrade() else { return };
-        let Some(ui) = inner.ui.get().filter(|ui| ui.is(&webview)) else { return };
         let url = load.request().url.as_url().clone();
-        let Some(body) = ui.file(&url) else { return };
+        let body = if inner.newtabs.borrow().contains(&webview.id()) {
+            // The new tab page and its wallpaper (the UI's local files).
+            if url.host_str() == Some(NEWTAB_HOST) {
+                Some(Some(inner.newtab_html.get().as_bytes().to_vec()))
+            } else {
+                let files = inner.ui.get().map_or(&[][..], |ui| &ui.files[..]);
+                local_file(files, &url).map(|p| p.and_then(|p| std::fs::read(p).ok()))
+            }
+        } else {
+            let Some(ui) = inner.ui.get().filter(|ui| ui.is(&webview)) else { return };
+            ui.file(&url)
+        };
+        let Some(body) = body else { return };
         let mut response = WebResourceResponse::new(url.clone());
         match &body {
             Some(_) => {
@@ -772,6 +877,9 @@ impl WebViewDelegate for Delegate {
 
     fn notify_url_changed(&self, webview: WebView, url: Url) {
         let Some(inner) = self.0.upgrade() else { return };
+        if url.host_str() == Some(NEWTAB_HOST) {
+            return; // the new tab page's own address isn't a site
+        }
         if let Some(tab) = inner.tab_of(&webview) {
             let _ = inner.proxy.send_event(UserEvent::UrlChanged(tab, url.to_string()));
         }
@@ -787,7 +895,7 @@ impl WebViewDelegate for Delegate {
     /// `window.open` and `target=_blank` open as tabs, keeping `window.opener` (OAuth popups need it).
     fn request_create_new(&self, _parent: WebView, request: CreateNewWebViewRequest) {
         let Some(inner) = self.0.upgrade() else { return };
-        let page = inner.page(|context| request.builder(context));
+        let page = inner.page(|context| request.builder(context), None);
         inner.popups.borrow_mut().push(page);
         let _ = inner.proxy.send_event(UserEvent::EnginePopup);
     }
@@ -857,6 +965,12 @@ impl WebViewDelegate for Delegate {
                     }
                 } else {
                     let _ = inner.proxy.send_event(UserEvent::Ui(msg.to_string()));
+                }
+                return;
+            }
+            if inner.is_newtab(&webview) {
+                if let Some(event) = inner.tab_of(&webview).and_then(|tab| crate::page_message(tab, msg)) {
+                    let _ = inner.proxy.send_event(event);
                 }
                 return;
             }
