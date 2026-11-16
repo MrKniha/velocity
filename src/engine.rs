@@ -1,14 +1,15 @@
 //! Web pages through Velocity's own engine (Servo, from `velocity-engine`) instead of WebView2.
-//! Velocity's UI (sidebar, new tab page, settings) stays in WebView2; every http(s) page of a tab
-//! is a Servo WebView. They all draw into one child window over the content area, which shows the
-//! active tab's page; the shell copies that page's offscreen frame into it.
+//! Every http(s) page of a tab is a Servo WebView. They all draw into one child window over the
+//! content area, which shows the active tab's page; the shell copies that page's offscreen frame
+//! into it. The tab UI (sidebar or top bar) is a page on the engine too, in a child window of its
+//! own (`open_ui`); the new tab page and settings stay in WebView2.
 //!
 //! Servo runs on Velocity's event loop: it wakes the loop with `UserEvent::Engine` and is pumped
 //! there. Web content runs in separate, locked-down Low-integrity processes (`sandbox.rs`).
 
-use std::cell::{Cell, RefCell};
+use std::cell::{Cell, OnceCell, RefCell};
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 
@@ -16,9 +17,43 @@ use euclid::{Point2D, Rect, Scale, Size2D};
 use servo::{
     Code, ConsoleLogLevel, CreateNewWebViewRequest, Cursor, DevicePoint, EventLoopWaker, InputEvent, Key, KeyState,
     KeyboardEvent, Location, Modifiers, MouseButton, MouseButtonAction, MouseButtonEvent, MouseMoveEvent, NamedKey,
-    OffscreenRenderingContext, Opts, Preferences, RenderingContext, Servo, ServoBuilder, UserContentManager, UserScript,
-    WebView, WebViewBuilder, WebViewDelegate, WebViewId, WheelDelta, WheelEvent, WheelMode, WindowRenderingContext,
+    MouseLeftViewportEvent, OffscreenRenderingContext, Opts, Preferences, RenderingContext, Servo, ServoBuilder,
+    UserContentManager, UserScript, WebResourceLoad, WebResourceResponse, WebView, WebViewBuilder, WebViewDelegate,
+    WebViewId, WheelDelta, WheelEvent, WheelMode, WindowRenderingContext,
 };
+
+/// Where the tab UI page is served from (`load_web_resource`; never reaches the network).
+const UI_HOST: &str = "ui.velocity.invalid";
+
+/// Runs in the tab UI page: `window.ipc.postMessage` as in WebView2 (wry). Messages go out as
+/// console messages starting with \u{1}, which only the UI's WebView is listened to for; "ready"
+/// once the page's own script has run, so Rust's calls into it can start.
+const UI_IPC_JS: &str = r#"window.ipc = { postMessage: m => console.log('\u0001' + m) };
+document.addEventListener('DOMContentLoaded', () => {
+  // Under a see-through UI (window glass) WebView2 showed the frame colour; the engine shows white.
+  const s = document.createElement('style');
+  s.textContent = 'html { background: var(--frame) !important; }';
+  document.head.append(s);
+  // The engine draws inline SVG from its attributes only, not from CSS: the icons' stroke and fill
+  // become attributes (the colour as computed now), again whenever the UI or its theme changes.
+  const icons = () => {
+    for (const svg of document.querySelectorAll('svg')) {
+      const c = getComputedStyle(svg);
+      for (const [k, v] of [['fill', 'none'], ['stroke', c.color], ['stroke-width', c.strokeWidth || '1.6'],
+        ['stroke-linecap', 'round'], ['stroke-linejoin', 'round']]) {
+        if (svg.getAttribute(k) !== v) svg.setAttribute(k, v);
+      }
+    }
+  };
+  let queued = false;
+  const queue = () => { if (!queued) { queued = true; setTimeout(() => { queued = false; icons(); }); } };
+  new MutationObserver(queue).observe(document.documentElement, { childList: true, subtree: true, attributeFilter: ['style', 'data-dark', 'class'] });
+  // Hover changes an icon's colour too.
+  document.addEventListener('mouseover', queue);
+  document.addEventListener('mouseout', queue);
+  icons();
+  console.log('\u0001\u0001ready');
+});"#;
 
 /// Runs in every page on the engine: links the stylesheet that hides the boxes blocked ads leave
 /// (cosmetic filters, which the network layer's content blocker serves from uBOL's data). First
@@ -66,6 +101,62 @@ struct Page {
     context: Rc<OffscreenRenderingContext>,
 }
 
+/// The tab UI: a page on the engine in its own child window (drawn straight into it).
+struct Ui {
+    window: Window,
+    context: Rc<WindowRenderingContext>,
+    webview: OnceCell<WebView>,
+    html: &'static str,
+    /// Hosts the page loads local files from (the wallpaper, profile pictures) and their folders.
+    files: Vec<(String, PathBuf)>,
+    /// Scripts for the page while it loads; run once it is ready (None from then on).
+    pending: RefCell<Option<Vec<String>>>,
+    cursor: Cell<DevicePoint>,
+}
+
+impl Ui {
+    fn is(&self, webview: &WebView) -> bool {
+        self.webview.get().is_some_and(|w| w.id() == webview.id())
+    }
+
+    /// The body for `url` if the UI serves it: Some(None) for a missing or outside file.
+    fn file(&self, url: &Url) -> Option<Option<Vec<u8>>> {
+        if url.host_str()? == UI_HOST {
+            return Some(Some(self.html.as_bytes().to_vec()));
+        }
+        Some(local_file(&self.files, url)?.and_then(|p| std::fs::read(p).ok()))
+    }
+}
+
+/// The file `url` names in `files` (hosts and their folders): None if the host isn't one of them,
+/// Some(None) if the path leads outside its folder.
+fn local_file(files: &[(String, PathBuf)], url: &Url) -> Option<Option<PathBuf>> {
+    let host = url.host_str()?;
+    let (_, dir) = files.iter().find(|(h, _)| h == host)?;
+    // Through a file: URL, so %20 decodes and ".." is resolved; an escaped "\..\\" survives that,
+    // so no ".." may be left either.
+    let path = Url::from_directory_path(dir)
+        .ok()
+        .and_then(|base| base.join(url.path().trim_start_matches('/')).ok())
+        .and_then(|u| u.to_file_path().ok())
+        .filter(|p| p.starts_with(dir) && !p.components().any(|c| c == std::path::Component::ParentDir));
+    // shortcut: whole files in memory (`Ui::file`); fine for pictures, upgrade to streaming if videos are served.
+    Some(path)
+}
+
+fn mime(path: &str) -> &'static str {
+    match path.rsplit('.').next().unwrap_or("").to_ascii_lowercase().as_str() {
+        "png" => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        "webp" => "image/webp",
+        "gif" => "image/gif",
+        "svg" => "image/svg+xml",
+        "mp4" => "video/mp4",
+        "webm" => "video/webm",
+        _ => "text/html; charset=utf-8",
+    }
+}
+
 /// What the delegate (called by Servo) shares with the engine.
 struct Inner {
     window: Window,
@@ -78,6 +169,7 @@ struct Inner {
     delegate: RefCell<Option<Rc<dyn WebViewDelegate>>>,
     /// Scripts every page runs (the cosmetic filters' stylesheet link).
     user_content: Rc<UserContentManager>,
+    ui: OnceCell<Ui>,
 }
 
 pub struct Engine {
@@ -112,6 +204,7 @@ impl Engine {
             .build(target)
             .expect("engine window");
         crate::drm::set_engine_window(window.hwnd() as isize); // protected video is drawn on it
+        clip_siblings(window.hwnd() as isize);
         let display = window.display_handle().expect("display handle");
         let handle = window.window_handle().expect("window handle");
         let context = Rc::new(WindowRenderingContext::new(display, handle, window.inner_size()).expect("GL context for pages"));
@@ -153,6 +246,7 @@ impl Engine {
             tabs: RefCell::new(HashMap::new()),
             popups: RefCell::new(Vec::new()),
             delegate: RefCell::new(None),
+            ui: OnceCell::new(),
         });
         let delegate: Rc<dyn WebViewDelegate> = Rc::new(Delegate(Rc::downgrade(&inner)));
         *inner.delegate.borrow_mut() = Some(delegate);
@@ -161,6 +255,113 @@ impl Engine {
 
     pub fn window_id(&self) -> WindowId {
         self.inner.window.id()
+    }
+
+    /// Show the tab UI page `html` in a child window of `parent`, with `scripts` run before its own;
+    /// `files`: hosts it loads local files from, and their folders.
+    pub fn open_ui(&self, parent: &Window, target: &EventLoopWindowTarget<UserEvent>, html: &'static str, scripts: &[&str], files: Vec<(String, PathBuf)>) {
+        use tao::platform::windows::WindowExtWindows;
+        use tao::rwh_06::{HasDisplayHandle, HasWindowHandle};
+        let window = WindowBuilder::new()
+            .with_parent_window(parent.hwnd())
+            .with_decorations(false)
+            .with_resizable(false)
+            .with_visible(false)
+            .with_inner_size(PhysicalSize::new(300, 600))
+            .build(target)
+            .expect("UI window");
+        clip_siblings(window.hwnd() as isize);
+        let display = window.display_handle().expect("display handle");
+        let handle = window.window_handle().expect("window handle");
+        let context = Rc::new(WindowRenderingContext::new(display, handle, window.inner_size()).expect("GL context for the UI"));
+        let user_content = Rc::new(UserContentManager::new(&self.servo));
+        for js in std::iter::once(UI_IPC_JS).chain(scripts.iter().copied()) {
+            user_content.add_script(Rc::new(UserScript::new(js.into(), None)));
+        }
+        let scale = Scale::new(window.scale_factor() as f32);
+        let theme = match window.theme() {
+            tao::window::Theme::Dark => servo::Theme::Dark,
+            _ => servo::Theme::Light,
+        };
+        let ui = Ui { window, context: context.clone(), webview: OnceCell::new(), html, files, pending: RefCell::new(Some(Vec::new())), cursor: Cell::new(DevicePoint::default()) };
+        let ui = match self.inner.ui.set(ui) {
+            Ok(()) => self.inner.ui.get().unwrap(),
+            Err(_) => return,
+        };
+        let delegate = self.inner.delegate.borrow().clone().expect("delegate set");
+        let webview = WebViewBuilder::new(&self.servo, context)
+            .url(Url::parse(&format!("https://{UI_HOST}/")).unwrap())
+            .hidpi_scale_factor(scale)
+            .delegate(delegate)
+            .user_content_manager(user_content)
+            .build();
+        webview.notify_theme_change(theme);
+        webview.show();
+        let _ = ui.webview.set(webview);
+    }
+
+    pub fn ui_window_id(&self) -> Option<WindowId> {
+        self.inner.ui.get().map(|ui| ui.window.id())
+    }
+
+    pub fn ui_hwnd(&self) -> Option<isize> {
+        use tao::platform::windows::WindowExtWindows;
+        self.inner.ui.get().map(|ui| ui.window.hwnd() as isize)
+    }
+
+    /// Run `js` in the tab UI page (once it has loaded).
+    pub fn ui_js(&self, js: &str) {
+        let Some(ui) = self.inner.ui.get() else { return };
+        if let Some(pending) = ui.pending.borrow_mut().as_mut() {
+            pending.push(js.into());
+            return;
+        }
+        if let Some(webview) = ui.webview.get() {
+            webview.evaluate_javascript(js, |_| {});
+        }
+    }
+
+    /// Place the tab UI over `x`, `y`, `width` x `height` (physical pixels of the parent's client area).
+    pub fn ui_bounds(&self, x: i32, y: i32, width: u32, height: u32) {
+        let Some(ui) = self.inner.ui.get() else { return };
+        let size = PhysicalSize::new(width.max(1), height.max(1));
+        // The webview resizes its context itself (only when the context's size differs).
+        if place(&ui.window, x, y, size, 0) {
+            if let Some(webview) = ui.webview.get() {
+                webview.resize(size);
+            }
+        }
+        ui.window.request_redraw();
+    }
+
+    pub fn ui_visible(&self, on: bool) {
+        if let Some(ui) = self.inner.ui.get() {
+            ui.window.set_visible(on);
+        }
+    }
+
+    /// Keys go to the tab UI.
+    pub fn ui_focus(&self) {
+        let Some(ui) = self.inner.ui.get() else { return };
+        ui.window.set_focus();
+        if let Some(webview) = ui.webview.get() {
+            webview.set_focused(true);
+        }
+    }
+
+    pub fn paint_ui(&self) {
+        let Some(ui) = self.inner.ui.get() else { return };
+        let Some(webview) = ui.webview.get() else { return };
+        let _ = ui.context.make_current();
+        webview.paint();
+        ui.context.present();
+    }
+
+    /// Input for the tab UI's window; returns a Velocity shortcut as `handle` does.
+    pub fn handle_ui(&self, event: &WindowEvent) -> Option<&'static str> {
+        let ui = self.inner.ui.get()?;
+        let webview = ui.webview.get()?.clone();
+        self.input(webview, &ui.cursor, || self.ui_focus(), event)
     }
 
     /// Let Servo handle its messages; called whenever it wakes the event loop.
@@ -300,35 +501,10 @@ impl Engine {
     /// Place the page over the content area (physical pixels of the parent's client area), with
     /// corners rounded to `corner` (the ellipse diameter, 0 for square), as tabs' WebViews are.
     pub fn set_bounds(&self, x: i32, y: i32, width: u32, height: u32, corner: i32) {
-        use windows::Win32::{
-            Foundation::{HWND, POINT, RECT},
-            Graphics::Gdi::{ClientToScreen, CreateRectRgn, CreateRoundRectRgn, SetWindowRgn},
-            UI::WindowsAndMessaging::{GetClientRect, GetWindowRect, SetWindowPos, SWP_NOACTIVATE, SWP_NOZORDER},
-        };
         let size = PhysicalSize::new(width.max(1), height.max(1));
-        let resized = self.inner.window.inner_size() != size;
-        let hwnd = HWND(self.hwnd() as _);
-        unsafe {
-            // tao keeps an invisible resize frame around an undecorated window, so its client area
-            // (where the page is drawn) is inset from the window: grow the window by that frame...
-            let (mut window, mut client, mut origin) = (RECT::default(), RECT::default(), POINT::default());
-            let _ = GetWindowRect(hwnd, &mut window);
-            let _ = GetClientRect(hwnd, &mut client);
-            let _ = ClientToScreen(hwnd, &mut origin);
-            let (left, top) = (origin.x - window.left, origin.y - window.top);
-            let right = window.right - (origin.x + client.right);
-            let bottom = window.bottom - (origin.y + client.bottom);
-            let (w, h) = (size.width as i32, size.height as i32);
-            let _ = SetWindowPos(hwnd, None, x - left, y - top, w + left + right, h + top + bottom, SWP_NOZORDER | SWP_NOACTIVATE);
-            // ...and show only the client area, rounded like a tab's card.
-            let region = if corner > 0 {
-                CreateRoundRectRgn(left, top, left + w + 1, top + h + 1, corner, corner)
-            } else {
-                CreateRectRgn(left, top, left + w, top + h)
-            };
-            SetWindowRgn(hwnd, Some(region), true); // the system owns the region from here on
-        }
-        if resized {
+        if place(&self.inner.window, x, y, size, corner) {
+            // Resizing rebinds the window's surface to the context current now: this one, not the UI's.
+            let _ = self.inner.context.make_current();
             self.inner.context.resize(size);
             for page in self.pages.values() {
                 page.webview.resize(size);
@@ -360,18 +536,26 @@ impl Engine {
     /// passing the key to the page, as `PAGE_KEYS_JS` does for WebView2 pages.
     pub fn handle(&self, event: &WindowEvent) -> Option<&'static str> {
         let webview = self.active_webview()?.clone();
+        self.input(webview, &self.cursor, || self.focus(), event)
+    }
+
+    /// `event` from a window of the engine, for `webview`; `focus` moves the keys to that window.
+    fn input(&self, webview: WebView, cursor: &Cell<DevicePoint>, focus: impl Fn(), event: &WindowEvent) -> Option<&'static str> {
         match event {
             WindowEvent::CursorMoved { position, .. } => {
                 let point = DevicePoint::new(position.x as f32, position.y as f32);
-                self.cursor.set(point);
+                cursor.set(point);
                 webview.notify_input_event(InputEvent::MouseMove(MouseMoveEvent::new(point.into())));
+            },
+            WindowEvent::CursorLeft { .. } => {
+                webview.notify_input_event(InputEvent::MouseLeftViewport(MouseLeftViewportEvent::default()));
             },
             WindowEvent::MouseInput { state, button, .. } => {
                 let action = if *state == ElementState::Pressed { MouseButtonAction::Down } else { MouseButtonAction::Up };
                 if action == MouseButtonAction::Down {
-                    self.focus(); // a click moves the keys to the page, as in any browser
+                    focus(); // a click moves the keys to the page, as in any browser
                 }
-                let point = self.cursor.get();
+                let point = cursor.get();
                 webview.notify_input_event(InputEvent::MouseButton(MouseButtonEvent::new(action, mouse_button(*button), point.into())));
             },
             WindowEvent::MouseWheel { delta, .. } => {
@@ -381,7 +565,7 @@ impl Engine {
                     MouseScrollDelta::PixelDelta(d) => (-d.x, -d.y, WheelMode::DeltaPixel),
                     _ => return None,
                 };
-                webview.notify_input_event(InputEvent::Wheel(WheelEvent::new(WheelDelta { x, y, z: 0.0, mode }, self.cursor.get().into())));
+                webview.notify_input_event(InputEvent::Wheel(WheelEvent::new(WheelDelta { x, y, z: 0.0, mode }, cursor.get().into())));
             },
             WindowEvent::ModifiersChanged(state) => self.modifiers.set(modifiers(*state)),
             WindowEvent::KeyboardInput { event, .. } => {
@@ -406,10 +590,56 @@ impl Engine {
     }
 }
 
-/// Stylo parses `mask-*` only with this pref (the patched servo-layout paints the masks). Stylo
-/// runs in the content processes, so each sets it too.
+/// Move child window `window` over `x`, `y` (physical pixels of the parent's client area) at client
+/// size `size`, with corners rounded to `corner` (the ellipse diameter, 0 for square). Returns
+/// whether its size changed.
+fn place(window: &Window, x: i32, y: i32, size: PhysicalSize<u32>, corner: i32) -> bool {
+    use tao::platform::windows::WindowExtWindows;
+    use windows::Win32::{
+        Foundation::{HWND, POINT, RECT},
+        Graphics::Gdi::{ClientToScreen, CreateRectRgn, CreateRoundRectRgn, SetWindowRgn},
+        UI::WindowsAndMessaging::{GetClientRect, GetWindowRect, SetWindowPos, SWP_NOACTIVATE, SWP_NOZORDER},
+    };
+    let resized = window.inner_size() != size;
+    let hwnd = HWND(window.hwnd() as _);
+    unsafe {
+        // tao keeps an invisible resize frame around an undecorated window, so its client area
+        // (where the page is drawn) is inset from the window: grow the window by that frame...
+        let (mut window, mut client, mut origin) = (RECT::default(), RECT::default(), POINT::default());
+        let _ = GetWindowRect(hwnd, &mut window);
+        let _ = GetClientRect(hwnd, &mut client);
+        let _ = ClientToScreen(hwnd, &mut origin);
+        let (left, top) = (origin.x - window.left, origin.y - window.top);
+        let right = window.right - (origin.x + client.right);
+        let bottom = window.bottom - (origin.y + client.bottom);
+        let (w, h) = (size.width as i32, size.height as i32);
+        let _ = SetWindowPos(hwnd, None, x - left, y - top, w + left + right, h + top + bottom, SWP_NOZORDER | SWP_NOACTIVATE);
+        // ...and show only the client area, rounded like a tab's card.
+        let region = if corner > 0 {
+            CreateRoundRectRgn(left, top, left + w + 1, top + h + 1, corner, corner)
+        } else {
+            CreateRectRgn(left, top, left + w, top + h)
+        };
+        SetWindowRgn(hwnd, Some(region), true); // the system owns the region from here on
+    }
+    resized
+}
+
+/// Drawing in a child window must not cover the sibling windows over it (the page over the UI).
+fn clip_siblings(hwnd: isize) {
+    use windows::Win32::{Foundation::HWND, UI::WindowsAndMessaging::{GetWindowLongPtrW, SetWindowLongPtrW, GWL_STYLE, WS_CLIPSIBLINGS}};
+    unsafe {
+        let hwnd = HWND(hwnd as _);
+        SetWindowLongPtrW(hwnd, GWL_STYLE, GetWindowLongPtrW(hwnd, GWL_STYLE) | WS_CLIPSIBLINGS.0 as isize);
+    }
+}
+
+/// Stylo parses `mask-*` only with this pref (the patched servo-layout paints the masks), and
+/// `zoom` (the tab UI's size setting; sites use it as in Chrome) only with the other. Stylo runs in
+/// the content processes, so each sets them too.
 pub fn set_style_prefs() {
     stylo_static_prefs::set_pref!("layout.css.masking.enabled", true);
+    stylo_static_prefs::set_pref!("layout.css.zoom.enabled", true);
 }
 
 impl Inner {
@@ -439,10 +669,35 @@ impl Inner {
 struct Delegate(std::rc::Weak<Inner>);
 
 impl WebViewDelegate for Delegate {
-    fn notify_new_frame_ready(&self, _: WebView) {
+    fn notify_new_frame_ready(&self, webview: WebView) {
         if let Some(inner) = self.0.upgrade() {
-            inner.window.request_redraw();
+            match inner.ui.get().filter(|ui| ui.is(&webview)) {
+                Some(ui) => ui.window.request_redraw(),
+                None => inner.window.request_redraw(),
+            }
         }
+    }
+
+    /// The tab UI's page and the local files it shows; every other load goes on as usual.
+    fn load_web_resource(&self, webview: WebView, load: WebResourceLoad) {
+        let Some(inner) = self.0.upgrade() else { return };
+        let Some(ui) = inner.ui.get().filter(|ui| ui.is(&webview)) else { return };
+        let url = load.request().url.as_url().clone();
+        let Some(body) = ui.file(&url) else { return };
+        let mut response = WebResourceResponse::new(url.clone());
+        match &body {
+            Some(_) => {
+                let mut headers = http::HeaderMap::new();
+                headers.insert(http::header::CONTENT_TYPE, http::HeaderValue::from_static(mime(url.path())));
+                response = response.headers(headers);
+            },
+            None => response = response.status_code(http::StatusCode::NOT_FOUND),
+        }
+        let mut load = load.intercept(response);
+        if let Some(body) = body {
+            load.send_body_data(body);
+        }
+        load.finish();
     }
 
     fn notify_url_changed(&self, webview: WebView, url: Url) {
@@ -489,7 +744,7 @@ impl WebViewDelegate for Delegate {
         }
     }
 
-    fn notify_cursor_changed(&self, _: WebView, cursor: Cursor) {
+    fn notify_cursor_changed(&self, webview: WebView, cursor: Cursor) {
         let Some(inner) = self.0.upgrade() else { return };
         // shortcut: the common shapes only; others show the arrow. Upgrade with a full table.
         let icon = match cursor {
@@ -502,11 +757,26 @@ impl WebViewDelegate for Delegate {
             Cursor::Crosshair => CursorIcon::Crosshair,
             _ => CursorIcon::Default,
         };
-        inner.window.set_cursor_visible(!matches!(cursor, Cursor::None));
-        inner.window.set_cursor_icon(icon);
+        let window = inner.ui.get().filter(|ui| ui.is(&webview)).map_or(&inner.window, |ui| &ui.window);
+        window.set_cursor_visible(!matches!(cursor, Cursor::None));
+        window.set_cursor_icon(icon);
     }
 
-    fn show_console_message(&self, _: WebView, level: ConsoleLogLevel, message: String) {
+    fn show_console_message(&self, webview: WebView, level: ConsoleLogLevel, message: String) {
+        // The tab UI's messages to Rust (UI_IPC_JS); a web page's console never gets here.
+        if let (Some(inner), Some(msg)) = (self.0.upgrade(), message.strip_prefix('\u{1}')) {
+            if let Some(ui) = inner.ui.get().filter(|ui| ui.is(&webview)) {
+                if msg == "\u{1}ready" {
+                    let pending = ui.pending.borrow_mut().take().unwrap_or_default();
+                    for js in pending {
+                        webview.evaluate_javascript(js, |_| {});
+                    }
+                } else {
+                    let _ = inner.proxy.send_event(UserEvent::Ui(msg.to_string()));
+                }
+                return;
+            }
+        }
         if matches!(level, ConsoleLogLevel::Error) && std::env::var_os("VELOCITY_TRACE").is_some() {
             eprintln!("console.error: {message}");
         }
@@ -672,6 +942,17 @@ mod tests {
         assert_eq!(host_only.domain(), None, "host-only");
         assert_eq!(host_only.same_site(), None, "Firefox's 0: not set");
         assert!(engine_cookie(&c(".example.com", 500.0, 0), 1000.0).is_none(), "expired");
+    }
+
+    #[test]
+    fn ui_files() {
+        let dir = std::env::temp_dir().join("velocity-bg");
+        let files = vec![("bg.velocity.example".to_string(), dir.clone())];
+        let get = |u: &str| local_file(&files, &Url::parse(u).unwrap());
+        assert_eq!(get("https://bg.velocity.example/my%20bg.png?v=3"), Some(Some(dir.join("my bg.png"))));
+        assert_eq!(get("https://other.example/bg.png"), None, "not a UI host");
+        assert!(get("https://bg.velocity.example/%2e%2e/%2e%2e/x").unwrap().is_none_or(|p| p.starts_with(&dir) && !p.to_string_lossy().contains("..")), "no way out of the folder");
+        assert!(get("https://bg.velocity.example/..%5c..%5cx").unwrap().is_none(), "nor with backslashes");
     }
 
     #[test]

@@ -9120,6 +9120,7 @@ dependencies = [
  "drm-wire",
  "embed-resource",
  "euclid",
+ "http",
  "rfd",
  "rusqlite",
  "rustls",
