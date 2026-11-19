@@ -1,0 +1,86 @@
+﻿[
+    {
+        "kind":  "work",
+        "build":  "R",
+        "run":  1,
+        "site":  "work",
+        "result":  "{\"dom\":66,\"layout\":4173,\"json\":67,\"regex\":15,\"sort\":46,\"alloc\":17}"
+    },
+    {
+        "kind":  "site",
+        "build":  "R",
+        "run":  1,
+        "site":  "vimeo.com",
+        "result":  "{\"response\":400,\"dcl\":4252,\"load\":6260,\"fcp\":4919}"
+    },
+    {
+        "kind":  "site",
+        "build":  "R",
+        "run":  1,
+        "site":  "reddit.com",
+        "result":  "{\"response\":496,\"dcl\":1107,\"load\":4575,\"fcp\":939}"
+    },
+    {
+        "kind":  "work",
+        "build":  "S",
+        "run":  1,
+        "site":  "work",
+        "result":  "{\"dom\":62,\"layout\":4259,\"json\":67,\"regex\":17,\"sort\":41,\"alloc\":11}"
+    },
+    {
+        "kind":  "site",
+        "build":  "S",
+        "run":  1,
+        "site":  "vimeo.com",
+        "result":  "{\"response\":696,\"dcl\":4333,\"load\":6191,\"fcp\":5061}"
+    },
+    {
+        "kind":  "site",
+        "build":  "S",
+        "run":  1,
+        "site":  "reddit.com",
+        "result":  "{\"response\":637,\"dcl\":1651,\"load\":4859,\"fcp\":1170}"
+    },
+    {
+        "kind":  "work",
+        "build":  "R",
+        "run":  2,
+        "site":  "work",
+        "result":  "{\"dom\":76,\"layout\":3841,\"json\":65,\"regex\":17,\"sort\":38,\"alloc\":16}"
+    },
+    {
+        "kind":  "site",
+        "build":  "R",
+        "run":  2,
+        "site":  "vimeo.com",
+        "result":  "{\"response\":793,\"dcl\":2306,\"load\":4449,\"fcp\":3187}"
+    },
+    {
+        "kind":  "site",
+        "build":  "R",
+        "run":  2,
+        "site":  "reddit.com",
+        "result":  "{\"response\":800,\"dcl\":1587,\"load\":4336,\"fcp\":1196}"
+    },
+    {
+        "kind":  "work",
+        "build":  "S",
+        "run":  2,
+        "site":  "work",
+        "result":  "{\"dom\":59,\"layout\":3830,\"json\":59,\"regex\":15,\"sort\":32,\"alloc\":10}"
+    },
+    {
+        "kind":  "site",
+        "build":  "S",
+        "run":  2,
+        "site":  "vimeo.com",
+        "result":  "{\"response\":724,\"dcl\":2134,\"load\":4137,\"fcp\":2924}"
+    },
+    {
+        "kind":  "site",
+        "build":  "S",
+        "run":  2,
+        "site":  "reddit.com",
+        "result":  "{\"response\":474,\"dcl\":990,\"load\":4239,\"fcp\":816}"
+    }
+]
