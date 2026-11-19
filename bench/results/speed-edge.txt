@@ -1,0 +1,9 @@
+﻿JS/DOM workload of bench/speed.ps1, ms. 2026-11-19, same PC.
+Edge (headless, --disable-gpu, fresh profile), 3 runs:
+  {"dom":12,"layout":2849,"json":60,"regex":60,"sort":222,"alloc":106}
+  {"dom":12,"layout":2805,"json":60,"regex":7,"sort":360,"alloc":181}
+  {"dom":12,"layout":2767,"json":45,"regex":19,"sort":148,"alloc":96}
+Velocity (engine-memory, hidden bench desktop), see speed-I-R.json / speed-R-S.json:
+  dom 59-99, layout 3830-4787, json 59-87, regex 15-25, sort 32-55, alloc 10-21
+Velocity, DOM split after load (eval), 20000 elements: create 7-8, className 7, textContent 9,
+  append detached 3, attached 4, fragment 15 (~30 ms in all; the 59-99 above runs during page load).
