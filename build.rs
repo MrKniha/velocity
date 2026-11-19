@@ -57,6 +57,24 @@ fn main() {
     std::fs::write(&ico_path, ico(&[16, 20, 24, 32, 40, 48, 64, 128, 256])).unwrap();
     let rc = out.join("velocity.rc");
     let escaped = ico_path.display().to_string().replace('\\', "\\\\");
-    std::fs::write(&rc, format!("1 ICON \"{escaped}\"\n")).unwrap();
+    // The segment heap (Windows 10 2004+, ignored before) for the browser and every content
+    // process (the same exe): Rust's System allocator and SpiderMonkey both allocate from the
+    // process heap, and the old NT heap holds more for their many small allocations.
+    let manifest = out.join("velocity.manifest");
+    std::fs::write(
+        &manifest,
+        r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<assembly xmlns="urn:schemas-microsoft-com:asm.v1" manifestVersion="1.0">
+  <application xmlns="urn:schemas-microsoft-com:asm.v3">
+    <windowsSettings>
+      <heapType xmlns="http://schemas.microsoft.com/SMI/2020/WindowsSettings">SegmentHeap</heapType>
+    </windowsSettings>
+  </application>
+</assembly>
+"#,
+    )
+    .unwrap();
+    let manifest = manifest.display().to_string().replace('\\', "\\\\");
+    std::fs::write(&rc, format!("1 ICON \"{escaped}\"\n1 24 \"{manifest}\"\n")).unwrap();
     embed_resource::compile(&rc, embed_resource::NONE).manifest_optional().unwrap();
 }

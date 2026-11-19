@@ -281,6 +281,11 @@ impl Engine {
             // real sites). One step back or forward stays instant; older pages load again when the
             // user goes back to them.
             session_history_max_length: 1,
+            // Every content process: no spare 1 MB GC chunk kept empty, two style/layout threads
+            // (the current one counts as one), two pool threads for image decoding and the like.
+            js_mem_gc_empty_chunk_count_min: 0,
+            layout_threads: 2,
+            thread_pool_workers_max: 2,
             ..Default::default()
         };
         set_style_prefs();
