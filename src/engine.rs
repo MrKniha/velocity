@@ -108,6 +108,17 @@ const COSMETIC_JS: &str = r#"(() => {
   document.addEventListener('DOMContentLoaded', link);
   addEventListener('load', () => { link(); setTimeout(link, 3000); });
 })();"#;
+/// Webcompat intervention (like Firefox's), youtube.com only: its template bindings hand
+/// `hidden` the Closure sentinel for "no value yet" (an object, so true) instead of undefined,
+/// which hid the guide's icons. Treat that object as false.
+// shortcut: works around the symptom; the engine-side cause (binding evaluated before `data` is
+// set, unlike in Chrome) is not found yet. Remove once it is.
+const WEBCOMPAT_JS: &str = r#"(() => {
+  if (!/(^|\.)youtube\.com$/.test(location.hostname)) return;
+  const d = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'hidden');
+  Object.defineProperty(HTMLElement.prototype, 'hidden', { configurable: true, enumerable: d.enumerable, get: d.get,
+    set(v) { d.set.call(this, v && typeof v === 'object' && String(v) === 'zClosurez' ? false : v); } });
+})();"#;
 use tao::{
     dpi::PhysicalSize,
     event::{ElementState, MouseButton as TaoButton, MouseScrollDelta, WindowEvent},
@@ -300,6 +311,7 @@ impl Engine {
 
         let user_content = Rc::new(UserContentManager::new(&servo));
         user_content.add_script(Rc::new(UserScript::new(COSMETIC_JS.into(), None)));
+        user_content.add_script(Rc::new(UserScript::new(WEBCOMPAT_JS.into(), None)));
         let inner = Rc::new(Inner {
             window,
             context,
