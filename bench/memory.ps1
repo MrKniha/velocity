@@ -34,6 +34,7 @@ param(
     [switch]$SendKeys
 )
 $ErrorActionPreference = 'Stop'
+. "$PSScriptRoot\desktop.ps1"
 $Scenarios = $Scenarios -split ',' | Where-Object { $_ }
 $root = Split-Path $PSScriptRoot -Parent
 $fixtures = Join-Path $PSScriptRoot 'fixtures'
@@ -113,10 +114,14 @@ function Launch([string[]]$arguments) {
     if (Test-Path "$ubo\manifest.json") { Copy-Item -Recurse $ubo "$data\velocity\extensions\uBOLite" }
     $old = $env:LOCALAPPDATA; $env:LOCALAPPDATA = $data; $env:VELOCITY_TEST_COMMANDS = "$data\commands.txt"
     try {
-        $p = if ($arguments) { Start-Process -FilePath $Exe -ArgumentList $arguments -PassThru } else { Start-Process -FilePath $Exe -PassThru }
+        # Keys need a window on the user's desktop; the test mode doesn't (bench\desktop.ps1).
+        $p = if ($SendKeys) {
+            if ($arguments) { Start-Process -FilePath $Exe -ArgumentList $arguments -PassThru } else { Start-Process -FilePath $Exe -PassThru }
+        } else { Start-OnBenchDesktop $Exe $arguments }
     } finally { $env:LOCALAPPDATA = $old; Remove-Item Env:VELOCITY_TEST_COMMANDS }
     Start-Sleep -Seconds 3
-    for ($i = 0; $i -lt 20 -and $p.MainWindowHandle -eq 0; $i++) { Start-Sleep -Milliseconds 500; $p.Refresh() }
+    # A window on the bench desktop has no handle this process can see: the 3 s above do then.
+    for ($i = 0; $SendKeys -and $i -lt 20 -and $p.MainWindowHandle -eq 0; $i++) { Start-Sleep -Milliseconds 500; $p.Refresh() }
     Peak-Start $p.Id
     [pscustomobject]@{ proc = $p; data = $data }
 }

@@ -22,6 +22,7 @@ param(
     [string]$Shots = (Join-Path $env:TEMP 'velocity-shots')
 )
 $ErrorActionPreference = 'Stop'
+. "$PSScriptRoot\desktop.ps1"
 $Exe = $Exe -split ',' | Where-Object { $_ }
 $Sites = $Sites -split ',' | Where-Object { $_ }
 $ubo = "$env:LOCALAPPDATA\velocity\extensions\uBOLite"
@@ -53,7 +54,7 @@ function Launch([string]$path, [string[]]$arguments, [hashtable]$envs) {
     if (Test-Path "$ubo\manifest.json") { Copy-Item -Recurse $ubo "$data\velocity\extensions\uBOLite" }
     $saved = @{}; $envs['LOCALAPPDATA'] = $data; $envs['VELOCITY_TEST_COMMANDS'] = "$data\commands.txt"
     foreach ($k in $envs.Keys) { $saved[$k] = [Environment]::GetEnvironmentVariable($k); [Environment]::SetEnvironmentVariable($k, $envs[$k]) }
-    try { $p = Start-Process -FilePath $path -ArgumentList $arguments -PassThru }
+    try { $p = Start-OnBenchDesktop $path $arguments } # off the user's screen (bench\desktop.ps1)
     finally { foreach ($k in $saved.Keys) { [Environment]::SetEnvironmentVariable($k, $saved[$k]) } }
     [pscustomobject]@{ proc = $p; data = $data }
 }
