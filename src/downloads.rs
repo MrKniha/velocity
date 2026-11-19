@@ -1,67 +1,25 @@
-//! Downloads: Velocity takes them over from WebView2 (whose own bubble doesn't show reliably in our child
-//! webviews), follows their progress and keeps a list per profile in `downloads.tsv`:
+//! Downloads: the engine's network layer saves them (`engine::follow_downloads`); Velocity follows their
+//! progress and keeps a list per profile in `downloads.tsv`:
 //! `<unix seconds>\t<state>\t<bytes>\t<url>\t<file path>`.
 
-use std::cell::{Cell, RefCell};
-use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use webview2_com::Microsoft::Web::WebView2::Win32::{
-    ICoreWebView2Deferral, ICoreWebView2DownloadOperation, ICoreWebView2DownloadStartingEventArgs, ICoreWebView2_4,
-    COREWEBVIEW2_DOWNLOAD_STATE,
-    COREWEBVIEW2_DOWNLOAD_STATE_COMPLETED, COREWEBVIEW2_DOWNLOAD_STATE_IN_PROGRESS,
-};
-use webview2_com::{take_pwstr, BytesReceivedChangedEventHandler, DownloadStartingEventHandler, StateChangedEventHandler};
-use windows::core::{Interface, HSTRING, PWSTR};
-use wry::{WebView, WebViewExtWindows};
-
 const LIMIT: usize = 200;
 
 static NEXT: AtomicU32 = AtomicU32::new(1);
 
-thread_local! {
-    // Running downloads, so they can be cancelled. WebView2 objects stay on the UI thread.
-    static RUNNING: RefCell<HashMap<u32, ICoreWebView2DownloadOperation>> = RefCell::new(HashMap::new());
-    // Downloads held back until the user picks where to save them ("Ask where to save each file").
-    static WAITING: RefCell<HashMap<u32, (ICoreWebView2DownloadStartingEventArgs, ICoreWebView2Deferral)>> = RefCell::new(HashMap::new());
-    static ASK: Cell<bool> = const { Cell::new(true) };
-}
-
 /// Whether new downloads ask where to save the file.
 pub fn set_ask(ask: bool) {
-    ASK.with(|a| a.set(ask));
-    net::download::set_ask(ask); // the engine's downloads too
+    net::download::set_ask(ask); // the engine's network layer asks before it saves
 }
 
-/// Answer a download that is waiting for a place to save: `Some(path)` saves it there, `None` cancels it.
-/// Returns whether it goes ahead.
-pub fn answer(id: u32, choice: Option<&Path>) -> bool {
-    let Some((args, deferral)) = WAITING.with(|w| w.borrow_mut().remove(&id)) else { return false };
-    let go = unsafe {
-        match choice {
-            Some(path) => args.SetResultFilePath(&HSTRING::from(path.as_os_str())).is_ok(),
-            None => {
-                let _ = args.SetCancel(true);
-                false
-            }
-        }
-    };
-    if !go {
-        RUNNING.with(|r| r.borrow_mut().remove(&id));
-    }
-    unsafe {
-        let _ = deferral.Complete();
-    }
-    go
-}
-
-/// What WebView2 reports about a download, sent to the event loop.
+/// What the engine reports about a download, sent to the event loop.
 pub enum Update {
     Started { id: u32, tab: u32, url: String, path: String, total: i64 },
-    /// Waiting for the user to pick where to save it; answer with `answer`.
+    /// Waiting for the user to pick where to save it; answered with `Engine::answer_download`.
     Ask { id: u32, tab: u32, url: String, path: String, total: i64 },
     Progress { id: u32, received: i64, total: i64 },
     Finished { id: u32, ok: bool, path: String },
@@ -89,81 +47,9 @@ fn now() -> u64 {
     SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_secs())
 }
 
-/// Take over the downloads of one tab.
-pub fn watch(view: &WebView, tab: u32, send: impl Fn(Update) + Clone + 'static) {
-    let Ok(wv) = view.webview().cast::<ICoreWebView2_4>() else { return };
-    let handler = DownloadStartingEventHandler::create(Box::new(move |_, args| {
-        let Some(args) = args else { return Ok(()) };
-        unsafe {
-            args.SetHandled(true)?; // our list replaces WebView2's own download bubble
-            let op = args.DownloadOperation()?;
-            let mut p = PWSTR::null();
-            args.ResultFilePath(&mut p)?;
-            let path = take_pwstr(p);
-            let mut u = PWSTR::null();
-            op.Uri(&mut u)?;
-            let url = take_pwstr(u);
-            let mut total = -1i64;
-            let _ = op.TotalBytesToReceive(&mut total);
-            let id = NEXT.fetch_add(1, Ordering::Relaxed);
-
-            let progress = send.clone();
-            op.add_BytesReceivedChanged(
-                &BytesReceivedChangedEventHandler::create(Box::new(move |op, _| {
-                    if let Some(op) = op {
-                        let (mut received, mut total) = (0i64, -1i64);
-                        op.BytesReceived(&mut received)?;
-                        let _ = op.TotalBytesToReceive(&mut total);
-                        progress(Update::Progress { id, received, total });
-                    }
-                    Ok(())
-                })),
-                &mut 0,
-            )?;
-            let finished = send.clone();
-            op.add_StateChanged(
-                &StateChangedEventHandler::create(Box::new(move |op, _| {
-                    let Some(op) = op else { return Ok(()) };
-                    let mut state = COREWEBVIEW2_DOWNLOAD_STATE::default();
-                    op.State(&mut state)?;
-                    if state != COREWEBVIEW2_DOWNLOAD_STATE_IN_PROGRESS {
-                        let mut p = PWSTR::null();
-                        let path = if op.ResultFilePath(&mut p).is_ok() { take_pwstr(p) } else { String::new() };
-                        RUNNING.with(|r| r.borrow_mut().remove(&id));
-                        finished(Update::Finished { id, ok: state == COREWEBVIEW2_DOWNLOAD_STATE_COMPLETED, path });
-                    }
-                    Ok(())
-                })),
-                &mut 0,
-            )?;
-            RUNNING.with(|r| r.borrow_mut().insert(id, op));
-            if ASK.with(|a| a.get()) {
-                // The dialog can't open inside this callback: hold the download and ask from the event loop.
-                let deferral = args.GetDeferral()?;
-                WAITING.with(|w| w.borrow_mut().insert(id, (args.clone(), deferral)));
-                send(Update::Ask { id, tab, url, path, total });
-            } else {
-                send(Update::Started { id, tab, url, path, total });
-            }
-        }
-        Ok(())
-    }));
-    unsafe {
-        let _ = wv.add_DownloadStarting(&handler, &mut 0);
-    }
-}
-
-/// An id for a download that didn't come from WebView2 (the engine's), from the same counter.
+/// An id for a download in Velocity's list.
 pub fn next_id() -> u32 {
     NEXT.fetch_add(1, Ordering::Relaxed)
-}
-
-pub fn cancel(id: u32) {
-    if let Some(op) = RUNNING.with(|r| r.borrow().get(&id).cloned()) {
-        unsafe {
-            let _ = op.Cancel();
-        }
-    }
 }
 
 pub struct Downloads {

@@ -1,0 +1,19 @@
+﻿youtube.com      baseline  run1 procs=4  wv2=0 ws=  901.1 privWs=  570.4 commit=  944.3 browser= 167.2 maxChild=   347 shot=True crashed=False title=
+youtube.com      F         run1 procs=4  wv2=0 ws=  691.9 privWs=    446 commit=  732.1 browser= 169.3 maxChild= 246.2 shot=True crashed=False title=
+facebook.com     F         run1 procs=3  wv2=0 ws=  430.5 privWs=    262 commit=  538.2 browser= 123.6 maxChild= 122.1 shot=True crashed=False title=Facebook
+edupage.org      F         run1 procs=3  wv2=0 ws=  630.6 privWs=    466 commit=  711.9 browser= 205.4 maxChild= 244.6 shot=True crashed=False title=aSc EduPage
+alza.sk          F         run1 procs=3  wv2=0 ws= 1043.4 privWs=    872 commit=   1307 browser= 369.2 maxChild= 486.5 shot=True crashed=False title=Alza.sk â€“ rÃ½chly a pohodlnÃ½ nÃ¡kup odkiaÄ¾koÄ¾vek | Alza.sk
+riotgames.com    F         run1 procs=4  wv2=0 ws=  834.3 privWs=  465.4 commit=  767.7 browser= 288.2 maxChild= 146.3 shot=True crashed=False title=
+steampowered.com F         run1 procs=3  wv2=0 ws=  818.4 privWs=  619.2 commit=  992.1 browser= 216.1 maxChild= 386.5 shot=True crashed=False title=Welcome to Steam
+wikipedia.org    F         run1 procs=3  wv2=0 ws=  391.4 privWs=  213.1 commit=  482.4 browser= 113.1 maxChild=  83.8 shot=True crashed=False title=Web browser - Wikipedia
+reddit.com       F         run1 procs=4  wv2=0 ws=   1282 privWs= 1006.2 commit= 1535.8 browser= 219.9 maxChild= 683.1 shot=True crashed=False title=
+github.com       F         run1 procs=3  wv2=0 ws=  947.5 privWs=  743.1 commit= 1608.4 browser= 158.1 maxChild= 568.8 shot=True crashed=False title=
+twitch.tv        F         run1 procs=3  wv2=0 ws=  687.5 privWs=  475.3 commit=  879.2 browser= 150.1 maxChild= 308.6 shot=True crashed=False title=
+sme.sk           F         run1 procs=3  wv2=0 ws=  393.2 privWs=  227.7 commit=  479.3 browser= 134.7 maxChild=    77 shot=True crashed=False title=
+google.com       F         run1 procs=3  wv2=0 ws=  362.3 privWs=  196.9 commit=  431.3 browser= 104.5 maxChild=  76.3 shot=True crashed=False title=
+vimeo.com        F         run1 procs=3  wv2=0 ws= 1653.1 privWs= 1304.6 commit= 1716.5 browser= 249.4 maxChild=1038.7 shot=True crashed=False title=
+spotify.com      F         run1 procs=5  wv2=0 ws=  732.2 privWs=  463.7 commit=  760.7 browser= 144.4 maxChild= 219.5 shot=True crashed=False title=Spotify - Web Player: Listen to Music, Podcasts, and Audiobooks Online
+soundcloud.com   F         run1 procs=3  wv2=0 ws=  507.4 privWs=  301.3 commit=  611.3 browser= 132.2 maxChild= 152.9 shot=True crashed=False title=
+tabs10           F         run1 procs=15 wv2=0 ws= 5371.3 privWs= 4010.1 commit= 5448.7 browser= 644.1 maxChild= 707.8 crashedTitles=0
+tabs10idle60     F         run1 procs=15 wv2=0 ws= 5397.1 privWs= 4035.6 commit= 5478.1 browser= 642.8 maxChild= 707.3 crashedTitles=0
+saved C:\Claude_Website\velocity\bench\results\real-baseline-F.json

@@ -1,0 +1,16 @@
+﻿home      run1 loaded         procs=3  wv2=0 ws=  339.5 privWs=  155.6 commit=  483.9 gpu=201.7 peakWs=342.4
+home      run1 idle60         procs=3  wv2=0 ws=  339.6 privWs=  155.5 commit=  479.1 gpu=201.6 peakWs=342.4
+tabs      run1 tabs1          procs=3  wv2=0 ws=  356.1 privWs=  174.3 commit=  443.4 gpu=153.7 peakWs=359.8
+tabs      run1 tabs5          procs=6  wv2=0 ws=  723.3 privWs=  324.2 commit=  739.3 gpu=196 peakWs=727.7
+tabs      run1 tabs10         procs=11 wv2=0 ws= 1323.5 privWs=  565.4 commit= 1153.3 gpu=197.6 peakWs=1326.4
+tabs      run1 tabs10idle60   procs=11 wv2=0 ws= 1321.3 privWs=  563.2 commit= 1150.4 gpu=197.6 peakWs=1326.4
+churn     run1 cycle0         procs=3  wv2=0 ws=  358.6 privWs=    175 commit=  444.1 gpu=153.5 peakWs=362
+churn     run1 cycle5         procs=3  wv2=0 ws=  394.2 privWs=  192.5 commit=  518.8 gpu=200.1 peakWs=513.7
+churn     run1 cycle10        procs=3  wv2=0 ws=  409.7 privWs=  207.9 commit=  537.5 gpu=200.1 peakWs=532.5
+churn     run1 cycle15        procs=3  wv2=0 ws=  412.4 privWs=  210.3 commit=    535 gpu=200.1 peakWs=538.4
+churn     run1 cycle20        procs=3  wv2=0 ws=  414.6 privWs=  212.5 commit=  545.6 gpu=200.1 peakWs=540.3
+navigate  run1 nav0           procs=3  wv2=0 ws=  357.4 privWs=  173.7 commit=  440.1 gpu=153.4 peakWs=361
+navigate  run1 nav10          procs=3  wv2=0 ws=  476.8 privWs=  290.3 commit=  575.1 gpu=173.1 peakWs=476.9
+navigate  run1 nav20          procs=3  wv2=0 ws=  573.7 privWs=  386.9 commit=  691.3 gpu=191 peakWs=574
+navigate  run1 nav30          procs=3  wv2=0 ws=  661.2 privWs=  474.4 commit=  781.2 gpu=191 peakWs=661.3
+saved C:\Claude_Website\velocity\bench\results\B-shared-renderer.json

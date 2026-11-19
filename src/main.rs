@@ -26,24 +26,13 @@ use tao::{
 };
 use windows::Win32::{
     Foundation::HWND,
-    Graphics::{
-        Dwm::{DwmSetWindowAttribute, DWMWA_USE_IMMERSIVE_DARK_MODE},
-        Gdi::{CreateRoundRectRgn, SetWindowRgn},
-    },
-    UI::WindowsAndMessaging::{
-        GetWindowLongPtrW, SetLayeredWindowAttributes, SetWindowLongPtrW, SetWindowPos, GWL_EXSTYLE, HWND_BOTTOM, HWND_TOP,
-        LWA_ALPHA, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, WS_EX_LAYERED,
-    },
-};
-use wry::{
-    dpi::{LogicalPosition, LogicalSize},
-    NewWindowResponse, PageLoadEvent, Rect, WebContext, WebView, WebViewBuilder, WebViewBuilderExtWindows,
-    WebViewExtWindows,
+    Graphics::Dwm::{DwmSetWindowAttribute, DWMWA_USE_IMMERSIVE_DARK_MODE},
+    UI::WindowsAndMessaging::{SetWindowPos, HWND_BOTTOM, HWND_TOP, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE},
 };
 
 const APP: &str = "Velocity";
-/// What a page in tab `id` asks for through `window.ipc.postMessage`: only shortcuts and
-/// "navigate this same tab" (and the new tab page's own requests).
+/// What the new tab page in tab `id` asks for through `window.ipc.postMessage`: shortcuts,
+/// "navigate this same tab", its layout and history suggestions.
 fn page_message(id: u32, body: &str) -> Option<UserEvent> {
     if let Some(k) = body.strip_prefix("key:") {
         Some(UserEvent::PageKey(k.to_string()))
@@ -63,15 +52,6 @@ const DEFAULT_ESSENTIALS: &[&str] = &["https://github.com", "https://www.youtube
 /// Width of the hover strip that reveals the sidebar in compact mode.
 const PEEK_STRIP: f64 = 6.0;
 
-/// Runs in every page: forwards browser shortcuts, since keys pressed in a page never reach the sidebar.
-const PAGE_KEYS_JS: &str = r#"
-addEventListener('keydown', e => {
-  const k = !e.ctrlKey ? null : e.altKey ? ({c: 'compact'})[e.key]
-    : ({t: 'new', w: 'close', l: 'focus', j: 'downloads', ',': 'settings', Tab: e.shiftKey ? 'prev' : 'next'})[e.key];
-  if (k) { e.preventDefault(); e.stopPropagation(); window.ipc.postMessage('key:' + k); }
-}, true);
-"#;
-
 enum UserEvent {
     Ui(String),
     Setting(String),
@@ -83,7 +63,6 @@ enum UserEvent {
     Fullscreen(u32, bool),
     Playing(u32, bool),
     BgInstalled(Option<media::Installed>, String),
-    NewTab(String),
     UrlChanged(u32, String),
     TitleChanged(u32, String),
     /// A page on the engine crashed.
@@ -104,8 +83,6 @@ struct Tab {
     id: u32,
     title: String,
     url: String, // empty while the tab shows the new-tab page
-    /// The new tab page (Velocity UI, WebView2). Web pages are on the engine instead: `None`.
-    view: Option<WebView>,
     unseen: bool, // navigated while in the background; marked until visited
     /// Not loaded: restored from the last session, or put to sleep to free its memory. The page
     /// loads when the tab is opened.
@@ -114,16 +91,8 @@ struct Tab {
     shown: std::time::Instant,
 }
 
-/// The tab UI (sidebar or top bar): a page on the engine, or in WebView2 without it (VELOCITY_WEBVIEW2).
-enum Ui {
-    Engine,
-    WebView2(WebView),
-}
-
 struct Browser {
     window: Window,
-    ui: Ui,
-    ctx: WebContext,
     base: PathBuf, // the app's data folder; extensions are shared by all profiles
     dir: PathBuf,  // this profile's folder
     profile: String,
@@ -137,8 +106,7 @@ struct Browser {
     next_id: u32,
     essentials: Vec<String>,
     settings: Settings,
-    settings_view: Option<WebView>,
-    settings_tab: Option<u32>, // id of the tab the settings panel was opened on
+    settings_tab: Option<u32>, // the settings panel is open on this tab (it is drawn by the engine)
     peeking: bool,
     minimized: bool,
     fullscreen: bool,                         // a page (video) is showing full screen
@@ -148,7 +116,7 @@ struct Browser {
     wallpapers: Vec<media::Wallpaper>,
     arrange_next: bool, // the next new tab opens in arrange mode
     settings_page: &'static str, // the page the settings panel opens on next, or "" for the last one
-    /// Velocity's engine, which shows every web page; `None` with VELOCITY_WEBVIEW2=1 (WebView2 does).
+    /// Velocity's engine, which draws every page and the tab UI; `None` only once it shut down.
     engine: Option<engine::Engine>,
     last_drag: Option<std::time::Instant>, // when the tab UI last started moving the window
     update: Option<update::Update>,       // a newer Velocity, offered in the tab UI
@@ -177,13 +145,11 @@ impl Browser {
         )
     }
 
-    /// Run `js` in tab `index` if it shows the new tab page (WebView2's or the engine's).
+    /// Run `js` in tab `index` if it shows the new tab page.
     fn newtab_js(&self, index: usize, js: &str) {
         let Some(tab) = self.tabs.get(index).filter(|t| t.url.is_empty()) else { return };
-        match (&tab.view, &self.engine) {
-            (Some(view), _) => drop(view.evaluate_script(js)),
-            (None, Some(engine)) => engine.newtab_js(tab.id, js),
-            _ => {}
+        if let Some(engine) = &self.engine {
+            engine.newtab_js(tab.id, js);
         }
     }
 
@@ -202,143 +168,48 @@ impl Browser {
     fn add_tab(&mut self, url: &str, restored: Option<String>) {
         let id = self.next_id;
         self.next_id += 1;
-        if self.engine.is_some() && !needs_webview2(url) {
-            let pending = restored.is_some().then(|| url.to_string());
-            let title = restored.unwrap_or_else(|| "New tab".into());
-            let shown_url = if url == NEW_TAB { String::new() } else { url.to_string() };
-            self.tabs.push(Tab { id, title, url: shown_url, view: None, unseen: false, pending: pending.clone(), shown: std::time::Instant::now() });
-            if pending.is_none() {
-                self.navigate(self.tabs.len() - 1, url);
-                self.activate(self.tabs.len() - 1);
-                if url == NEW_TAB {
-                    if let Some(engine) = &self.engine {
-                        engine.focus(); // type into the centred search bar straight away
-                    }
+        let pending = restored.is_some().then(|| url.to_string());
+        let title = restored.unwrap_or_else(|| "New tab".into());
+        let shown_url = if url == NEW_TAB { String::new() } else { url.to_string() };
+        self.tabs.push(Tab { id, title, url: shown_url, unseen: false, pending: pending.clone(), shown: std::time::Instant::now() });
+        if pending.is_none() {
+            self.navigate(self.tabs.len() - 1, url);
+            self.activate(self.tabs.len() - 1);
+            if url == NEW_TAB {
+                if let Some(engine) = &self.engine {
+                    engine.focus(); // type into the centred search bar straight away
                 }
             }
-            return;
         }
-        let new_tab = url == NEW_TAB;
-        let view = self.make_view(id, if restored.is_some() { "about:blank" } else { url });
-        let shown_url = if new_tab { String::new() } else { url.to_string() };
-        if let Some(title) = restored {
-            let _ = view.set_visible(false);
-            self.tabs.push(Tab { id, title, url: shown_url, view: Some(view), unseen: false, pending: Some(url.to_string()), shown: std::time::Instant::now() });
-            return;
-        }
-        self.tabs.push(Tab { id, title: "New tab".into(), url: shown_url, view: Some(view), unseen: false, pending: None, shown: std::time::Instant::now() });
-        self.activate(self.tabs.len() - 1);
-        if let (true, Some(view)) = (new_tab, self.current()) {
-            let _ = view.focus(); // type into the centred search bar straight away
-        }
-    }
-
-    /// A WebView2 for tab `id`: the new tab page (`NEW_TAB`), or a site the engine can't show yet.
-    fn make_view(&mut self, id: u32, url: &str) -> WebView {
-        let (p1, p2, p3, p4) = (self.proxy.clone(), self.proxy.clone(), self.proxy.clone(), self.proxy.clone());
-        let new_tab = url == NEW_TAB;
-        let init = self.page_init_js();
-        let bounds = self.content_bounds();
-        let builder = WebViewBuilder::new_with_web_context(&mut self.ctx);
-        let builder = if new_tab {
-            builder.with_html(include_str!("pages/newtab.html")).with_background_color(self.settings.card_rgba())
-        } else {
-            builder.with_url(url)
-        };
-        let view = builder
-            .with_bounds(bounds)
-            .with_browser_extensions_enabled(true)
-            .with_extensions_path(self.base.join("extensions"))
-            .with_devtools(true)
-            .with_initialization_script(PAGE_KEYS_JS)
-            .with_initialization_script_for_main_only(if new_tab { init } else { String::new() }, true)
-            // Pages can post anything: only shortcuts and "navigate this same tab" are accepted from them.
-            .with_ipc_handler(move |req| {
-                if let Some(event) = page_message(id, req.body()) {
-                    let _ = p1.send_event(event);
-                }
-            })
-            .with_on_page_load_handler(move |ev, url| {
-                if let PageLoadEvent::Started = ev {
-                    let _ = p2.send_event(UserEvent::UrlChanged(id, url));
-                }
-            })
-            .with_document_title_changed_handler(move |title| {
-                let _ = p3.send_event(UserEvent::TitleChanged(id, title));
-            })
-            // shortcut: popups open as plain tabs, so window.opener is lost (breaks some OAuth popups); upgrade via NewWindowResponse::Create.
-            .with_new_window_req_handler(move |url, _| {
-                let _ = p4.send_event(UserEvent::NewTab(url));
-                NewWindowResponse::Deny
-            })
-            .build_as_child(&self.window)
-            .expect("create tab webview");
-        round_corners(host_hwnd(&view), &self.window, &self.settings, bounds);
-        let p5 = self.proxy.clone();
-        downloads::watch(&view, id, move |u| {
-            let _ = p5.send_event(UserEvent::Download(u));
-        });
-        watch_media(&view, id, self.proxy.clone());
-        if new_tab {
-            media::map(&view, media::BG_HOST, &media::bg_dir(&self.dir));
-        } else {
-            let _ = view.zoom(self.settings.page_zoom as f64 / 100.0);
-        }
-        view
     }
 
     fn zoom(&self) -> f32 {
         self.settings.page_zoom as f32 / 100.0
     }
 
-    /// Load `url` in tab `index`. Web pages go to the engine; a new tab page leaving for a site
-    /// gives its WebView2 up. The caller shows the tab again if it is the active one.
+    /// Load `url` in tab `index` on the engine. The caller shows the tab again if it is the active one.
     fn navigate(&mut self, index: usize, url: &str) {
         let id = self.tabs[index].id;
-        let zoom = self.zoom();
-        if url == NEW_TAB && self.engine.is_some() {
-            let (init, zoom) = (self.page_init_js(), self.zoom());
-            if let Some(engine) = self.engine.as_mut() {
-                engine.load_newtab(id, include_str!("pages/newtab.html"), init, zoom);
-                self.tabs[index].view = None;
-                return;
-            }
-        }
-        match self.engine.as_mut() {
-            Some(engine) if !needs_webview2(url) && (engine.has(id) || url.starts_with("http")) => {
-                engine.load(id, url, zoom);
-                self.tabs[index].view = None;
-            }
-            engine => {
-                if let Some(engine) = engine {
-                    engine.close(id); // a site the engine can't show yet moves to WebView2
-                }
-                match &self.tabs[index].view {
-                    Some(view) => {
-                        let _ = view.load_url(url);
-                    }
-                    None => {
-                        let view = self.make_view(id, url);
-                        let _ = view.set_visible(false); // the caller shows the tab
-                        self.tabs[index].view = Some(view);
-                    }
-                }
-            }
+        let (init, zoom) = (if url == NEW_TAB { self.page_init_js() } else { String::new() }, self.zoom());
+        let Some(engine) = self.engine.as_mut() else { return };
+        if url == NEW_TAB {
+            engine.load_newtab(id, include_str!("pages/newtab.html"), init, zoom);
+        } else {
+            engine.load(id, url, zoom);
         }
     }
 
-    /// The engine can't show tab `id`'s site: WebView2 does, for the rest of this run.
-    fn fall_back(&mut self, id: u32) {
+    /// Tab `id`'s page crashed: its page goes away and the tab waits, as a sleeping tab does, until
+    /// it is opened or reloaded (reloading it at once could crash again and again).
+    fn crashed(&mut self, id: u32) {
         let Some(i) = self.index_of(id) else { return };
-        if !self.engine.as_ref().is_some_and(|e| e.has(id)) {
-            return;
-        }
-        let url = self.tabs[i].url.clone();
-        FELL_BACK.lock().unwrap().insert(host(&url).trim_start_matches("www.").to_ascii_lowercase());
-        self.navigate(i, &url);
-        if i == self.active {
-            self.activate(i);
-        }
+        let Some(engine) = self.engine.as_mut() else { return };
+        engine.close(id);
+        let tab = &mut self.tabs[i];
+        tab.pending = Some(if tab.url.is_empty() { NEW_TAB.to_string() } else { tab.url.clone() });
+        tab.title = "Page crashed - reload to try again".into();
+        self.playing.remove(&id);
+        self.sync_ui();
     }
 
     /// Put background tabs unused for `SLEEP_AFTER` to sleep.
@@ -358,24 +229,16 @@ impl Browser {
         self.engine.as_ref().filter(|e| e.has(id))
     }
 
-    /// The window a tab is drawn in: its WebView2 host, or the engine's window.
-    fn tab_hwnd(&self, index: usize) -> Option<HWND> {
-        match (&self.tabs.get(index)?.view, &self.engine) {
-            (Some(view), _) => host_hwnd(view),
-            (None, Some(engine)) => Some(HWND(engine.hwnd() as _)),
-            (None, None) => None,
-        }
+    /// The window pages are drawn in: the engine's.
+    fn tab_hwnd(&self) -> Option<HWND> {
+        self.engine.as_ref().map(|engine| HWND(engine.hwnd() as _))
     }
 
-    /// Track a tab's URL; leaving the new-tab page restores the white default sites expect.
+    /// Track a tab's URL.
     fn set_url(&mut self, index: usize, url: String) {
         let background = index != self.active;
         let tab = &mut self.tabs[index];
         if url.starts_with("http") {
-            if let (true, Some(view)) = (tab.url.is_empty(), &tab.view) {
-                let _ = view.set_background_color((255, 255, 255, 255));
-                let _ = view.zoom(self.settings.page_zoom as f64 / 100.0);
-            }
             if self.settings.history {
                 self.history.record(&url, "");
             }
@@ -389,10 +252,11 @@ impl Browser {
         if index >= self.tabs.len() {
             return;
         }
-        let closed = self.tabs.remove(index); // dropping the WebView destroys it
+        let closed = self.tabs.remove(index);
         if let Some(engine) = self.engine.as_mut() {
-            engine.close(closed.id);
+            engine.close(closed.id); // its WebView goes, and with it the page's memory
         }
+        self.playing.remove(&closed.id);
         if self.settings_tab == Some(closed.id) {
             self.close_settings(); // the panel belonged to that tab
         }
@@ -423,52 +287,35 @@ impl Browser {
         if let Some(url) = self.tabs[index].pending.take() {
             self.navigate(index, &url);
         }
-        // Show the new page before hiding the old one, so the empty frame never flashes in between.
         let id = self.tabs[index].id;
+        let mine = self.settings_tab == Some(id);
         if let Some(engine) = self.engine.as_mut() {
-            engine.activate(Some(id)); // hidden when this tab shows the new tab page
-        }
-        if let Some(view) = &self.tabs[index].view {
-            let _ = view.set_visible(true);
-            memory_target(view, false);
+            engine.show_settings(mine); // the settings panel belongs to the tab it was opened on
+            engine.activate(Some(id));
         }
         // Always in front: with window glass the tab UI spans the window underneath, and anything that raised it
         // (suggestions, compact peek) would otherwise cover a tab that was hidden at the time.
-        bring_to_top(self.tab_hwnd(index));
-        for (_, t) in self.tabs.iter().enumerate().filter(|(i, _)| *i != index) {
-            if let Some(view) = &t.view {
-                let _ = view.set_visible(false);
-                memory_target(view, true); // background tabs give memory back to Windows
-            }
-        }
-        self.show_settings_if_owner();
+        bring_to_top(self.tab_hwnd());
         self.sync_ui();
-        self.update_opacity();
     }
 
     /// The settings panel belongs to the tab it was opened on: it shows only while that tab is active.
-    fn show_settings_if_owner(&self) {
-        if let Some(view) = &self.settings_view {
-            let mine = self.settings_tab == Some(self.tabs[self.active].id);
-            let _ = view.set_visible(mine);
-            if mine {
-                bring_to_top(host_hwnd(view)); // tabs opened since then sit above it
-            }
+    fn show_settings_if_owner(&mut self) {
+        let mine = self.settings_tab == Some(self.tabs[self.active].id);
+        if let Some(engine) = self.engine.as_mut() {
+            engine.show_settings(mine);
         }
     }
 
     fn close_settings(&mut self) {
-        self.settings_view = None;
         self.settings_tab = None;
+        if let Some(engine) = self.engine.as_mut() {
+            engine.close_settings(); // its WebView goes with it
+        }
     }
 
     fn index_of(&self, id: u32) -> Option<usize> {
         self.tabs.iter().position(|t| t.id == id)
-    }
-
-    /// The shown tab's new tab page, if it shows one.
-    fn current(&self) -> Option<&WebView> {
-        self.tabs.get(self.active)?.view.as_ref()
     }
 
     /// Essentials switch to an open tab on the same site instead of opening duplicates.
@@ -498,9 +345,7 @@ impl Browser {
         let list: Vec<String> = self.essentials.iter().map(|e| js_str(e)).collect();
         let js = format!("renderEssentials([{}])", list.join(","));
         self.newtabs_js(&js);
-        if let Some(v) = &self.settings_view {
-            let _ = v.evaluate_script(&js);
-        }
+        self.settings_js(&js);
     }
 
     /// Open tabs for the next start: `active\t<index>`, then `<url>\t<title>` per tab (empty url = new tab page).
@@ -566,45 +411,32 @@ impl Browser {
     }
 
     fn ui_js(&self, js: &str) {
-        match (&self.ui, &self.engine) {
-            (Ui::WebView2(v), _) => drop(v.evaluate_script(js)),
-            (Ui::Engine, Some(engine)) => engine.ui_js(js),
-            (Ui::Engine, None) => {}
+        if let Some(engine) = &self.engine {
+            engine.ui_js(js);
         }
     }
 
-    fn ui_bounds(&self, bounds: Rect) {
-        match (&self.ui, &self.engine) {
-            (Ui::WebView2(v), _) => drop(v.set_bounds(bounds)),
-            (Ui::Engine, Some(engine)) => {
-                let scale = self.window.scale_factor();
-                let (p, size) = (bounds.position.to_physical::<i32>(scale), bounds.size.to_physical::<u32>(scale));
-                engine.ui_bounds(p.x, p.y, size.width, size.height);
-            }
-            (Ui::Engine, None) => {}
+    /// `bounds`: logical px of the window's client area.
+    fn ui_bounds(&self, bounds: Xywh) {
+        if let Some(engine) = &self.engine {
+            let (x, y, w, h) = physical(bounds, self.window.scale_factor());
+            engine.ui_bounds(x, y, w, h);
         }
     }
 
     fn ui_visible(&self, on: bool) {
-        match (&self.ui, &self.engine) {
-            (Ui::WebView2(v), _) => drop(v.set_visible(on)),
-            (Ui::Engine, Some(engine)) => engine.ui_visible(on),
-            (Ui::Engine, None) => {}
+        if let Some(engine) = &self.engine {
+            engine.ui_visible(on);
         }
     }
 
     fn ui_hwnd(&self) -> Option<HWND> {
-        match (&self.ui, &self.engine) {
-            (Ui::WebView2(v), _) => host_hwnd(v),
-            (Ui::Engine, engine) => engine.as_ref().and_then(|e| e.ui_hwnd()).map(|h| HWND(h as _)),
-        }
+        self.engine.as_ref().and_then(|e| e.ui_hwnd()).map(|h| HWND(h as _))
     }
 
     fn ui_focus(&self) {
-        match (&self.ui, &self.engine) {
-            (Ui::WebView2(v), _) => drop(v.focus()),
-            (Ui::Engine, Some(engine)) => engine.ui_focus(),
-            (Ui::Engine, None) => {}
+        if let Some(engine) = &self.engine {
+            engine.ui_focus();
         }
     }
 
@@ -612,30 +444,22 @@ impl Browser {
         !self.settings.compact || self.peeking
     }
 
-    fn sidebar_bounds(&self) -> Rect {
+    fn sidebar_bounds(&self) -> Xywh {
         let (w, h) = logical_size(&self.window);
-        rect(layout_rects(w, h, &self.settings, self.top_peek).0)
+        layout_rects(w, h, &self.settings, self.top_peek).0
     }
 
-    fn content_bounds(&self) -> Rect {
+    fn content_bounds(&self) -> Xywh {
         let (w, h) = logical_size(&self.window);
-        rect(layout_rects(w, h, &self.settings, self.top_peek).1)
+        layout_rects(w, h, &self.settings, self.top_peek).1
     }
 
     fn layout(&self) {
         if self.fullscreen {
             let (w, h) = logical_size(&self.window);
             self.ui_visible(false);
-            let full = rect((0.0, 0.0, w, h));
-            if let Some(view) = self.current() {
-                let _ = view.set_bounds(full);
-            }
-            self.place_engine(full, 0);
-            let hwnd = self.tab_hwnd(self.active);
-            if self.on_engine().is_none() {
-                clear_region(hwnd);
-            }
-            bring_to_top(hwnd);
+            self.place_engine((0.0, 0.0, w, h), 0);
+            bring_to_top(self.tab_hwnd());
             return;
         }
         self.ui_bounds(self.sidebar_bounds());
@@ -646,21 +470,15 @@ impl Browser {
             send_to_bottom(self.ui_hwnd()); // under every page again (it spans the window with window glass)
         }
         let b = self.content_bounds();
-        for view in self.tabs.iter().filter_map(|t| t.view.as_ref()).chain(self.settings_view.as_ref()) {
-            let _ = view.set_bounds(b);
-            round_corners(host_hwnd(view), &self.window, &self.settings, b);
-        }
         self.place_engine(b, (self.settings.radius as f64 * 2.0 * self.window.scale_factor()) as i32);
         self.push_frame();
     }
 
-    /// The engine's window covers `bounds` (logical), like a tab's WebView would.
-    fn place_engine(&self, bounds: Rect, corner: i32) {
+    /// The engine's window covers `bounds` (logical px), with corners rounded to `corner`.
+    fn place_engine(&self, bounds: Xywh, corner: i32) {
         let Some(engine) = &self.engine else { return };
-        let scale = self.window.scale_factor();
-        let position = bounds.position.to_physical::<i32>(scale);
-        let size = bounds.size.to_physical::<u32>(scale);
-        engine.set_bounds(position.x, position.y, size.width, size.height, corner);
+        let (x, y, w, h) = physical(bounds, self.window.scale_factor());
+        engine.set_bounds(x, y, w, h, corner);
     }
 
     fn set_peek(&mut self, peek: bool) {
@@ -690,11 +508,8 @@ impl Browser {
                     dialog = dialog.set_file_name(name);
                 }
                 let choice = dialog.save_file();
-                // The question came from the engine's network layer, or from WebView2.
-                let go = match self.engine.as_ref() {
-                    Some(engine) if engine.answer_download(id, choice.clone()) => choice.is_some(),
-                    _ => downloads::answer(id, choice.as_deref()),
-                };
+                // The question came from the engine's network layer.
+                let go = self.engine.as_ref().is_some_and(|engine| engine.answer_download(id, choice.clone())) && choice.is_some();
                 if go {
                     let path = choice.map(|p| p.to_string_lossy().into_owned()).unwrap_or(path);
                     return self.download_update(Update::Started { id, tab, url, path, total });
@@ -764,7 +579,6 @@ impl Browser {
             "open" if done => drop(std::process::Command::new("explorer").arg(&item.path).spawn()),
             "show" if done => drop(std::process::Command::new("explorer").raw_arg(format!("/select,\"{}\"", item.path)).spawn()),
             "cancel" => {
-                downloads::cancel(item.id);
                 if let Some(engine) = &self.engine {
                     engine.cancel_download(item.id);
                 }
@@ -778,7 +592,7 @@ impl Browser {
 
     /// Show the settings panel on this tab at `page` (opening it if needed).
     fn show_settings_page(&mut self, page: &'static str) {
-        if self.settings_view.is_some() {
+        if self.settings_tab.is_some() {
             self.settings_tab = Some(self.tabs[self.active].id);
             self.show_settings_if_owner();
             self.settings_js(&format!("go('{page}')"));
@@ -791,45 +605,31 @@ impl Browser {
 
     fn toggle_settings(&mut self) {
         let here = self.tabs[self.active].id;
-        if self.settings_view.is_some() {
+        if self.settings_tab.is_some() {
             if self.settings_tab == Some(here) {
-                return self.close_settings(); // dropping the WebView closes the panel
+                return self.close_settings();
             }
             // Open on another tab: move the panel to this one instead of opening a second.
             self.settings_tab = Some(here);
             return self.show_settings_if_owner();
         }
         self.settings_tab = Some(here);
-        let proxy = self.proxy.clone();
-        let bounds = self.content_bounds();
+        // Its page (served by the engine, only ever that page) shows the wallpaper and profile
+        // pictures from the folders served since start (`main`).
         let init = self.page_init_js();
-        let view = WebViewBuilder::new_with_web_context(&mut self.ctx)
-            .with_html(include_str!("pages/settings.html"))
-            .with_background_color(self.settings.card_rgba())
-            .with_bounds(bounds)
-            .with_browser_extensions_enabled(true)
-            .with_initialization_script(init)
-            // This view only ever shows our own page, which is what makes its messages trustworthy.
-            .with_navigation_handler(|url| !url.starts_with("http"))
-            .with_ipc_handler(move |req| {
-                let _ = proxy.send_event(UserEvent::Setting(req.body().clone()));
-            })
-            .build_as_child(&self.window)
-            .expect("create settings webview");
-        round_corners(host_hwnd(&view), &self.window, &self.settings, bounds);
-        media::map(&view, media::BG_HOST, &media::bg_dir(&self.dir));
-        media::map(&view, profiles::AVATAR_HOST, &profiles::avatars_dir(&self.base));
-        let _ = view.focus();
-        self.settings_view = Some(view);
+        if let Some(engine) = self.engine.as_mut() {
+            engine.open_settings(include_str!("pages/settings.html"), init);
+        }
+        bring_to_top(self.tab_hwnd());
     }
 
-    /// Find Wallpaper Engine wallpapers and list them in the settings page (previews via mapped hosts).
+    /// Find Wallpaper Engine wallpapers and list them in the settings page (previews via served hosts).
     fn scan_wallpapers(&mut self) {
         self.we_dirs = media::workshop_dirs();
         self.wallpapers = media::scan(&self.we_dirs);
-        let Some(view) = &self.settings_view else { return };
+        let Some(engine) = &self.engine else { return };
         for (i, dir) in self.we_dirs.iter().enumerate() {
-            media::map(view, &media::we_host(i), dir);
+            engine.serve(&media::we_host(i), dir);
         }
         let items: Vec<String> = self
             .wallpapers
@@ -841,7 +641,7 @@ impl Browser {
                 )
             })
             .collect();
-        let _ = view.evaluate_script(&format!("renderWallpapers([{}],{})", items.join(","), self.we_dirs.len()));
+        self.settings_js(&format!("renderWallpapers([{}],{})", items.join(","), self.we_dirs.len()));
     }
 
     /// Install a new background file and show it everywhere. Copying runs on a worker thread, so a large
@@ -852,9 +652,7 @@ impl Browser {
             let none = media::Installed { bg: String::new(), entry: String::new(), thumb: String::new() };
             return self.background_installed(Some(none), "");
         }
-        if let Some(v) = &self.settings_view {
-            let _ = v.evaluate_script("bgBusy(true)");
-        }
+        self.settings_js("bgBusy(true)");
         let (dir, proxy) = (self.dir.clone(), self.proxy.clone());
         let tag = we.as_ref().map(|(_, w)| format!("{}:{}", w.library, w.id)).unwrap_or_default();
         std::thread::spawn(move || {
@@ -868,9 +666,7 @@ impl Browser {
     }
 
     fn background_installed(&mut self, done: Option<media::Installed>, we: &str) {
-        if let Some(v) = &self.settings_view {
-            let _ = v.evaluate_script(&format!("bgBusy(false,{})", done.is_none()));
-        }
+        self.settings_js(&format!("bgBusy(false,{})", done.is_none()));
         let Some(done) = done else { return };
         self.settings.bg = done.bg;
         self.settings.set("bg_entry", &done.entry);
@@ -1033,8 +829,8 @@ impl Browser {
     }
 
     fn settings_js(&self, js: &str) {
-        if let Some(v) = &self.settings_view {
-            let _ = v.evaluate_script(js);
+        if let Some(engine) = &self.engine {
+            engine.settings_js(js);
         }
     }
 
@@ -1091,14 +887,8 @@ impl Browser {
         if what.contains('c') && b.has_cookies() {
             match import::firefox_cookies(&b) {
                 Ok(c) => {
-                    // WebView2's cookie store, through any of its webviews (the settings panel runs the import).
-                    let wv2 = match &self.ui {
-                        Ui::WebView2(v) => Some(v),
-                        Ui::Engine => self.settings_view.as_ref().or_else(|| self.tabs.iter().find_map(|t| t.view.as_ref())),
-                    };
-                    let n = wv2.map_or(0, |v| import::add_cookies(v, &c));
-                    // Web pages render on the engine: it gets the logins too.
-                    let n = self.engine.as_ref().map_or(n, |engine| engine.import_cookies(&c).max(n));
+                    // Into the engine's cookie jar: every page renders on it.
+                    let n = self.engine.as_ref().map_or(0, |engine| engine.import_cookies(&c));
                     done.push(format!("{n} cookies (sites you were logged in to)"))
                 }
                 Err(e) => failed.push(format!("cookies ({e})")),
@@ -1131,20 +921,8 @@ impl Browser {
         downloads::set_ask(self.settings.ask_download);
         let (r, g, b) = self.settings.frame_rgb();
         self.window.set_background_color(Some((r, g, b, 255)));
-        if let Ui::WebView2(v) = &self.ui {
-            let _ = v.set_background_color((r, g, b, 255));
-        }
-        self.update_opacity();
-        let card = self.settings.card_rgba();
-        for t in self.tabs.iter().filter(|t| t.url.is_empty()).filter_map(|t| t.view.as_ref()).chain(self.settings_view.as_ref()) {
-            let _ = t.set_background_color(card);
-        }
-        let zoom = self.settings.page_zoom as f64 / 100.0;
-        for view in self.tabs.iter().filter(|t| !t.url.is_empty()).filter_map(|t| t.view.as_ref()) {
-            let _ = view.zoom(zoom);
-        }
         if let Some(engine) = &self.engine {
-            engine.set_zoom(zoom as f32);
+            engine.set_zoom(self.zoom());
         }
         if !self.settings.compact {
             self.peeking = false;
@@ -1153,9 +931,7 @@ impl Browser {
         self.sync_ui();
         let js = format!("applySettings({})", self.settings.to_js());
         self.newtabs_js(&js);
-        if let Some(v) = &self.settings_view {
-            let _ = v.evaluate_script(&js);
-        }
+        self.settings_js(&js);
     }
 
     fn shortcut(&mut self, key: &str) {
@@ -1184,32 +960,20 @@ impl Browser {
     fn handle_ui(&mut self, msg: &str) -> bool {
         let (cmd, arg) = msg.split_once(':').unwrap_or((msg, ""));
         let tab = arg.parse::<u32>().ok().and_then(|id| self.index_of(id));
-        let _ = match (cmd, tab) {
+        let _: Result<(), ()> = match (cmd, tab) {
             ("go", _) => {
                 let (i, url) = (self.active, to_url(arg, self.settings.search_prefix()));
                 self.navigate(i, &url);
                 self.activate(i);
                 // Keys go to the page now, as after Enter in any browser's address bar.
-                match self.on_engine() {
-                    Some(engine) => engine.focus(),
-                    None => drop(self.current().map(|v| v.focus())),
+                if let Some(engine) = &self.engine {
+                    engine.focus();
                 }
                 Ok(())
             }
-            ("back", _) => match self.on_engine() {
-                Some(engine) => Ok(engine.back()),
-                None => self.current().map_or(Ok(()), |v| v.evaluate_script("history.back()")),
-            },
-            ("forward", _) => match self.on_engine() {
-                Some(engine) => Ok(engine.forward()),
-                None => self.current().map_or(Ok(()), |v| v.evaluate_script("history.forward()")),
-            },
-            ("reload", _) => match self.on_engine() {
-                Some(engine) => Ok(engine.reload()),
-                None => self.current().map_or(Ok(()), |v| v.reload()),
-            },
-            // shortcut: no developer tools for pages on the engine yet; upgrade with Servo's devtools server.
-            ("devtools", _) => Ok(if let Some(v) = self.current() { v.open_devtools() }),
+            ("back", _) => Ok(if let Some(engine) = self.on_engine() { engine.back() }),
+            ("forward", _) => Ok(if let Some(engine) = self.on_engine() { engine.forward() }),
+            ("reload", _) => Ok(self.reload()),
             ("select", Some(i)) => Ok(self.activate(i)),
             ("close", Some(i)) => Ok(self.close_tab(i)),
             ("pin", Some(i)) => Ok(self.toggle_essential(&self.tabs[i].url.clone())),
@@ -1286,11 +1050,10 @@ impl Browser {
             let (w, h) = logical_size(&self.window);
             let scale = self.settings.ui_scale as f64 / 100.0;
             let bar = TOP_BAR * scale;
-            self.ui_bounds(rect((0.0, 0.0, w, (bar + extra * scale).min(h))));
+            self.ui_bounds((0.0, 0.0, w, (bar + extra * scale).min(h)));
             bring_to_top(self.ui_hwnd());
         } else {
-            bring_to_top(self.tab_hwnd(self.active)); // with window glass the tab UI lies under the page
-            self.show_settings_if_owner();
+            bring_to_top(self.tab_hwnd()); // with window glass the tab UI lies under the page
         }
     }
 
@@ -1304,16 +1067,19 @@ impl Browser {
         self.layout();
         self.ui_js(&format!("topPeek({on})"));
         // The tab UI spans the window under the page while the strip shows; keep the page in front.
-        bring_to_top(self.tab_hwnd(self.active));
-        self.show_settings_if_owner();
+        bring_to_top(self.tab_hwnd());
     }
 
-    /// Window opacity, except while the shown tab plays a video or sound or is full screen: then it's solid.
-    fn update_opacity(&self) {
-        let busy = self.fullscreen || self.tabs.get(self.active).is_some_and(|t| self.playing.contains(&t.id));
-        // A layered (see-through) window doesn't show the engine's GPU-drawn pages (or its tab UI) at all.
-        let busy = busy || self.on_engine().is_some() || matches!(self.ui, Ui::Engine);
-        set_opacity(&self.window, if busy { 100 } else { self.settings.opacity });
+    /// Reload the shown page; a tab whose page crashed or sleeps loads it again.
+    fn reload(&mut self) {
+        if let Some(engine) = self.on_engine() {
+            return engine.reload();
+        }
+        let i = self.active;
+        if let Some(url) = self.tabs.get_mut(i).and_then(|t| t.pending.take()) {
+            self.navigate(i, &url);
+            self.activate(i);
+        }
     }
 
     /// A page asked for full screen (a video's full-screen button) or left it: the whole window becomes that page.
@@ -1324,7 +1090,6 @@ impl Browser {
         self.fullscreen = on;
         self.window.set_fullscreen(on.then_some(tao::window::Fullscreen::Borderless(None)));
         self.layout();
-        self.update_opacity();
     }
 
     /// Hiding the page while minimised also pauses it: videos and effects stop, which saves power.
@@ -1333,19 +1098,11 @@ impl Browser {
             return;
         }
         self.minimized = min;
-        if let Some(view) = &self.tabs[self.active].view {
-            let _ = view.set_visible(!min);
-        }
         let id = self.tabs[self.active].id;
+        let mine = !min && self.settings_tab == Some(id);
         if let Some(engine) = self.engine.as_mut() {
+            engine.show_settings(mine);
             engine.activate((!min).then_some(id));
-        }
-        if min {
-            if let Some(v) = &self.settings_view {
-                let _ = v.set_visible(false);
-            }
-        } else {
-            self.show_settings_if_owner();
         }
     }
 
@@ -1359,7 +1116,7 @@ impl Browser {
         });
         self.next_id = next;
         for id in &ids {
-            self.tabs.push(Tab { id: *id, title: "New tab".into(), url: String::new(), view: None, unseen: false, pending: None, shown: std::time::Instant::now() });
+            self.tabs.push(Tab { id: *id, title: "New tab".into(), url: String::new(), unseen: false, pending: None, shown: std::time::Instant::now() });
         }
         if !ids.is_empty() {
             self.activate(self.tabs.len() - 1);
@@ -1438,8 +1195,11 @@ fn window_glass(s: &Settings) -> bool {
     s.bg_window && !s.bg.is_empty() && !s.compact
 }
 
-fn rect((x, y, w, h): Xywh) -> Rect {
-    Rect { position: LogicalPosition::new(x, y).into(), size: LogicalSize::new(w, h).into() }
+/// Logical px to physical px (position, size) at `scale`.
+fn physical((x, y, w, h): Xywh, scale: f64) -> (i32, i32, u32, u32) {
+    let p = tao::dpi::LogicalPosition::new(x, y).to_physical::<i32>(scale);
+    let s = tao::dpi::LogicalSize::new(w, h).to_physical::<u32>(scale);
+    (p.x, p.y, s.width, s.height)
 }
 
 /// Which tab is active after closing `closed`: keep the same tab, or take the neighbour that slid into its place.
@@ -1532,12 +1292,6 @@ fn logical_size(window: &Window) -> (f64, f64) {
     (s.width, s.height)
 }
 
-/// The child HWND wry hosts a webview in.
-fn host_hwnd(view: &WebView) -> Option<HWND> {
-    let mut hwnd = HWND::default();
-    unsafe { view.controller().ParentWindow(&mut hwnd).ok().map(|_| hwnd) }
-}
-
 fn bring_to_top(hwnd: Option<HWND>) {
     restack(hwnd, HWND_TOP);
 }
@@ -1551,55 +1305,6 @@ fn restack(hwnd: Option<HWND>, after: HWND) {
         unsafe {
             let _ = SetWindowPos(hwnd, Some(after), 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
         }
-    }
-}
-
-/// Clip the page's host window to a rounded rect so it reads as a floating card.
-// shortcut: window regions are not anti-aliased, so the corners are slightly jagged; upgrade with DirectComposition hosting.
-fn round_corners(hwnd: Option<HWND>, window: &Window, settings: &Settings, bounds: Rect) {
-    let Some(hwnd) = hwnd else { return };
-    let scale = window.scale_factor();
-    let size = bounds.size.to_physical::<i32>(scale);
-    let d = (settings.radius as f64 * 2.0 * scale) as i32;
-    unsafe {
-        if d == 0 {
-            SetWindowRgn(hwnd, None, true);
-        } else {
-            let rgn = CreateRoundRectRgn(0, 0, size.width + 1, size.height + 1, d, d);
-            SetWindowRgn(hwnd, Some(rgn), true); // the system owns rgn from here on
-        }
-    }
-}
-
-/// Full screen and media events of a tab, which wry doesn't pass on.
-fn watch_media(view: &WebView, id: u32, proxy: EventLoopProxy<UserEvent>) {
-    use webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2_8;
-    use webview2_com::{ContainsFullScreenElementChangedEventHandler, IsDocumentPlayingAudioChangedEventHandler};
-    use windows::core::{Interface, BOOL};
-    let wv = view.webview();
-    let p = proxy.clone();
-    let full = ContainsFullScreenElementChangedEventHandler::create(Box::new(move |w, _| {
-        if let Some(w) = w {
-            let mut on = BOOL(0);
-            unsafe { w.ContainsFullScreenElement(&mut on)? };
-            let _ = p.send_event(UserEvent::Fullscreen(id, on.as_bool()));
-        }
-        Ok(())
-    }));
-    unsafe {
-        let _ = wv.add_ContainsFullScreenElementChanged(&full, &mut 0);
-    }
-    let Ok(wv8) = wv.cast::<ICoreWebView2_8>() else { return };
-    let audio = IsDocumentPlayingAudioChangedEventHandler::create(Box::new(move |w, _| {
-        if let Some(w) = w.and_then(|w| w.cast::<ICoreWebView2_8>().ok()) {
-            let mut on = BOOL(0);
-            unsafe { w.IsDocumentPlayingAudio(&mut on)? };
-            let _ = proxy.send_event(UserEvent::Playing(id, on.as_bool()));
-        }
-        Ok(())
-    }));
-    unsafe {
-        let _ = wv8.add_IsDocumentPlayingAudioChanged(&audio, &mut 0);
     }
 }
 
@@ -1618,42 +1323,6 @@ fn parse_session(text: &str) -> (Vec<(String, String)>, usize) {
         }
     }
     (pages, active)
-}
-
-/// Ask WebView2 to keep a hidden tab small (it trims caches and memory) or let a shown one use what it needs.
-fn memory_target(view: &WebView, low: bool) {
-    use webview2_com::Microsoft::Web::WebView2::Win32::{
-        ICoreWebView2_19, COREWEBVIEW2_MEMORY_USAGE_TARGET_LEVEL_LOW, COREWEBVIEW2_MEMORY_USAGE_TARGET_LEVEL_NORMAL,
-    };
-    use windows::core::Interface;
-    if let Ok(wv) = view.webview().cast::<ICoreWebView2_19>() {
-        let level = if low { COREWEBVIEW2_MEMORY_USAGE_TARGET_LEVEL_LOW } else { COREWEBVIEW2_MEMORY_USAGE_TARGET_LEVEL_NORMAL };
-        unsafe {
-            let _ = wv.SetMemoryUsageTargetLevel(level);
-        }
-    }
-}
-
-fn clear_region(hwnd: Option<HWND>) {
-    if let Some(hwnd) = hwnd {
-        unsafe {
-            SetWindowRgn(hwnd, None, true);
-        }
-    }
-}
-
-/// Whole-window opacity (page included). At 100% the layered style is removed so normal drawing costs nothing extra.
-fn set_opacity(window: &Window, percent: u32) {
-    let hwnd = HWND(window.hwnd() as _);
-    unsafe {
-        let style = GetWindowLongPtrW(hwnd, GWL_EXSTYLE);
-        if percent >= 100 {
-            SetWindowLongPtrW(hwnd, GWL_EXSTYLE, style & !(WS_EX_LAYERED.0 as isize));
-        } else {
-            SetWindowLongPtrW(hwnd, GWL_EXSTYLE, style | WS_EX_LAYERED.0 as isize);
-            let _ = SetLayeredWindowAttributes(hwnd, windows::Win32::Foundation::COLORREF(0), (percent * 255 / 100) as u8, LWA_ALPHA);
-        }
-    }
 }
 
 /// Shared by every built-in page: turns the four user colours into the full set of CSS variables
@@ -1769,38 +1438,16 @@ fn seed_extensions(bundled: &Path, data: &Path) {
     }
 }
 
-/// `velocity.exe <address>`, as Windows starts the default browser for a link: only web addresses, never files.
-/// Sites that need what Velocity's engine doesn't have yet. Its Media Source Extensions play WebM
-/// (VP8, VP9, Opus) and MP4 (H.264, AAC): YouTube, Twitch and Kick play. Of DRM it has PlayReady
-/// (through Windows, src/drm.rs), so Netflix plays on it; sites that need Widevine or FairPlay
-/// (Spotify, Vimeo, which serves its videos with DRM only) don't. Dailymotion isn't verified yet.
-/// They open in WebView2.
-// shortcut: a fixed list; upgrade by testing each site on the engine.
-const WEBVIEW2_SITES: &[&str] = &[
-    // netflix.com plays on the engine: PlayReady through the DRM service (src/drm.rs).
-    "spotify.com", "disneyplus.com",
-    "primevideo.com", "max.com", "hbomax.com", "vimeo.com", "dailymotion.com", "skyshowtime.com",
-    "voyo.sk", "voyo.cz", "music.apple.com", "tv.apple.com", "soundcloud.com", "deezer.com", "tidal.com",
-];
-
-fn needs_webview2(url: &str) -> bool {
-    let host = host(url).trim_start_matches("www.").to_ascii_lowercase();
-    WEBVIEW2_SITES.iter().any(|site| host == *site || host.ends_with(&format!(".{site}"))) || FELL_BACK.lock().unwrap().contains(&host)
-}
-
-/// Sites that failed on the engine in this run (the page crashed, or a Cloudflare check it
-/// can't pass never ended): WebView2 shows them from then on.
-static FELL_BACK: std::sync::Mutex<std::collections::BTreeSet<String>> = std::sync::Mutex::new(std::collections::BTreeSet::new());
-
 /// A background tab unused this long is put to sleep: its page is dropped (with its process and
 /// memory) and loads again when the tab is opened. Tabs playing sound or video stay.
 const SLEEP_AFTER: std::time::Duration = std::time::Duration::from_secs(15 * 60);
 
+/// `velocity.exe <address>`, as Windows starts the default browser for a link: only web addresses, never files.
 fn start_url() -> Option<String> {
     std::env::args().skip(1).find(|a| a.starts_with("https://") || a.starts_with("http://"))
 }
 
-fn main() -> wry::Result<()> {
+fn main() {
     // Velocity's engine starts web content as copies of this exe: `velocity.exe --content-process <token>`.
     let mut args = std::env::args().skip(1);
     if args.next().as_deref() == Some("--content-process") {
@@ -1814,7 +1461,7 @@ fn main() -> wry::Result<()> {
         // Layout runs here, in the content process: Stylo's prefs must be set here too.
         engine::set_style_prefs();
         servo::run_content_process(token);
-        return Ok(());
+        return;
     }
     let base = data_dir();
     std::fs::create_dir_all(base.join("extensions")).ok();
@@ -1851,34 +1498,23 @@ fn main() -> wry::Result<()> {
         .expect("window");
     dark_frame(&window);
 
-    // One shared profile = one WebView2 process tree; all webviews must then use the same extension settings.
-    let mut ctx = WebContext::new(Some(dir.join("profile")));
     let proxy = event_loop.create_proxy();
-    let engine = std::env::var_os("VELOCITY_WEBVIEW2")
-        .is_none()
-        .then(|| engine::Engine::new(&window, &event_loop, proxy.clone(), &dir.join("engine"), &base.join("extensions").join("uBOLite")));
-    let ui = match &engine {
-        // VELOCITY_WEBVIEW2_UI=1: the tab UI in WebView2, pages still on the engine.
-        Some(engine) if std::env::var_os("VELOCITY_WEBVIEW2_UI").is_none() => {
-            let files = vec![
-                (media::BG_HOST.to_string(), media::bg_dir(&dir)), // window glass shows the wallpaper in the tab UI too
-                (profiles::AVATAR_HOST.to_string(), profiles::avatars_dir(&base)),
-            ];
-            engine.open_ui(&window, &event_loop, include_str!("pages/sidebar.html"), &[THEME_JS, SUGGEST_JS], files);
-            Ui::Engine
-        }
-        _ => Ui::WebView2(wv2_ui(&window, &mut ctx, &dir, &base, proxy.clone(), (r, g, b))?),
-    };
+    let engine = engine::Engine::new(&window, &event_loop, proxy.clone(), &dir.join("engine"), &base.join("extensions").join("uBOLite"));
+    let files = vec![
+        // The new tab page, the settings panel and window glass (in the tab UI) show the wallpaper.
+        (media::BG_HOST.to_string(), media::bg_dir(&dir)),
+        (profiles::AVATAR_HOST.to_string(), profiles::avatars_dir(&base)),
+    ];
+    engine.open_ui(&window, &event_loop, include_str!("pages/sidebar.html"), &[THEME_JS, SUGGEST_JS], files);
 
     let essentials = load_essentials(&dir);
     let mut b = Browser {
-        window, ui, ctx, base, dir, profile, history, downloads, downloads_unseen: false, close_after: Vec::new(), proxy, tabs: Vec::new(), active: 0, next_id: 1, essentials, settings,
-        settings_view: None, settings_tab: None, peeking: false, minimized: false, fullscreen: false, playing: Default::default(), top_peek: false, we_dirs: Vec::new(), wallpapers: Vec::new(), arrange_next: false, settings_page: "",
-        engine,
+        window, base, dir, profile, history, downloads, downloads_unseen: false, close_after: Vec::new(), proxy, tabs: Vec::new(), active: 0, next_id: 1, essentials, settings,
+        settings_tab: None, peeking: false, minimized: false, fullscreen: false, playing: Default::default(), top_peek: false, we_dirs: Vec::new(), wallpapers: Vec::new(), arrange_next: false, settings_page: "",
+        engine: Some(engine),
         last_drag: None,
         update: None,
     };
-    b.update_opacity();
     b.layout();
     let restored = b.restore_session();
     match start_url() {
@@ -1894,6 +1530,22 @@ fn main() -> wry::Result<()> {
             let _ = updates.send_event(UserEvent::UpdateFound(u));
         }
     });
+    // Test mode (bench/memory.ps1): `VELOCITY_TEST_COMMANDS=<file>`; each line written to that file
+    // is run as a tab UI command ("key:new", "go:<address>", "key:close"), then the file is removed.
+    // Drives the browser without sending keys to whatever window has the focus.
+    if let Some(file) = std::env::var_os("VELOCITY_TEST_COMMANDS").map(PathBuf::from) {
+        let commands = b.proxy.clone();
+        std::thread::spawn(move || loop {
+            std::thread::sleep(std::time::Duration::from_millis(200));
+            let Ok(text) = std::fs::read_to_string(&file) else { continue };
+            let _ = std::fs::remove_file(&file);
+            for line in text.lines().filter(|l| !l.is_empty()) {
+                if commands.send_event(UserEvent::Ui(line.to_string())).is_err() {
+                    return;
+                }
+            }
+        });
+    }
     let ticker = b.proxy.clone();
     std::thread::spawn(move || loop {
         std::thread::sleep(std::time::Duration::from_secs(60));
@@ -1912,7 +1564,7 @@ fn main() -> wry::Result<()> {
                 }
             }
             Event::UserEvent(UserEvent::EnginePopup) => b.adopt_popups(),
-            Event::UserEvent(UserEvent::Crashed(id)) => b.fall_back(id),
+            Event::UserEvent(UserEvent::Crashed(id)) => b.crashed(id),
             Event::UserEvent(UserEvent::Tick) => b.sleep_idle_tabs(),
             Event::UserEvent(UserEvent::UpdateFound(u)) => {
                 b.ui_js(&format!("updateAvailable({})", js_str(&u.version)));
@@ -1967,6 +1619,19 @@ fn main() -> wry::Result<()> {
                 }
             }
             Event::WindowEvent { event: WindowEvent::CursorMoved { position, .. }, .. } => b.cursor_moved(position.x, position.y),
+            // Test mode only (the tab UI never sends them): "mem:<file>" saves Servo's memory report,
+            // "eval:<file>|<js>" the result of running <js> in the active tab's page.
+            Event::UserEvent(UserEvent::Ui(msg))
+                if (msg.starts_with("mem:") || msg.starts_with("eval:")) && std::env::var_os("VELOCITY_TEST_COMMANDS").is_some() =>
+            {
+                if let Some(e) = &b.engine {
+                    if let Some(file) = msg.strip_prefix("mem:") {
+                        e.memory_report(PathBuf::from(file));
+                    } else if let Some((file, js)) = msg[5..].split_once('|') {
+                        e.eval_to_file(js, PathBuf::from(file));
+                    }
+                }
+            }
             Event::UserEvent(UserEvent::Ui(msg)) => {
                 if !b.handle_ui(&msg) {
                     b.shut_down();
@@ -1996,16 +1661,8 @@ fn main() -> wry::Result<()> {
                     }
                 }
             }
-            Event::UserEvent(UserEvent::NewTab(url)) => b.open_tab(&url),
             Event::UserEvent(UserEvent::UrlChanged(id, url)) => {
                 if let Some(i) = b.index_of(id) {
-                    // A page on the engine went (by a link) to a site it can't show yet: WebView2 takes over.
-                    if needs_webview2(&url) && b.engine.as_ref().is_some_and(|e| e.has(id)) {
-                        b.navigate(i, &url);
-                        if i == b.active {
-                            b.activate(i);
-                        }
-                    }
                     b.set_url(i, url);
                 }
             }
@@ -2013,7 +1670,6 @@ fn main() -> wry::Result<()> {
             Event::UserEvent(UserEvent::Fullscreen(id, on)) => b.set_fullscreen(id, on),
             Event::UserEvent(UserEvent::Playing(id, on)) => {
                 if on { b.playing.insert(id) } else { b.playing.remove(&id) };
-                b.update_opacity();
             }
             Event::UserEvent(UserEvent::PageSuggest(id, q)) => {
                 // Only our new tab page gets history; once the tab shows a site, the site could read the reply.
@@ -2021,8 +1677,6 @@ fn main() -> wry::Result<()> {
                     b.newtab_js(i, &b.suggestions_js(&q));
                 }
             }
-            // Cloudflare's "checking your browser" page, which the engine doesn't pass.
-            Event::UserEvent(UserEvent::TitleChanged(id, title)) if title == "Just a moment..." && b.engine.as_ref().is_some_and(|e| e.has(id)) => b.fall_back(id),
             Event::UserEvent(UserEvent::TitleChanged(id, title)) => {
                 if let Some(i) = b.index_of(id) {
                     if b.settings.history && b.tabs[i].url.starts_with("http") {
@@ -2035,33 +1689,6 @@ fn main() -> wry::Result<()> {
             _ => {}
         }
     });
-}
-
-/// The tab UI in WebView2, when the engine is off (VELOCITY_WEBVIEW2).
-fn wv2_ui(window: &Window, ctx: &mut WebContext, dir: &Path, base: &Path, proxy: EventLoopProxy<UserEvent>, rgb: (u8, u8, u8)) -> wry::Result<WebView> {
-    let ui = WebViewBuilder::new_with_web_context(ctx)
-        .with_html(include_str!("pages/sidebar.html"))
-        .with_initialization_script(THEME_JS)
-        .with_initialization_script(SUGGEST_JS)
-        .with_background_color((rgb.0, rgb.1, rgb.2, 255))
-        .with_browser_extensions_enabled(true)
-        .with_ipc_handler(move |req| {
-            let _ = proxy.send_event(UserEvent::Ui(req.body().clone()));
-        })
-        .build_as_child(window)?;
-    media::map(&ui, media::BG_HOST, &media::bg_dir(&dir)); // window glass shows the wallpaper in the tab UI too
-    media::map(&ui, profiles::AVATAR_HOST, &profiles::avatars_dir(&base));
-    memory_target(&ui, true); // the tab UI is small: WebView2 may trim its caches
-    // With window glass the tab UI spans the window under the pages. Its window didn't clip its
-    // siblings, so it drew over the engine's page (above it in z-order): the page stayed blank.
-    if let Some(hwnd) = host_hwnd(&ui) {
-        use windows::Win32::UI::WindowsAndMessaging::{GWL_STYLE, WS_CLIPSIBLINGS};
-        unsafe {
-            SetWindowLongPtrW(hwnd, GWL_STYLE, GetWindowLongPtrW(hwnd, GWL_STYLE) | WS_CLIPSIBLINGS.0 as isize);
-        }
-    }
-
-    Ok(ui)
 }
 
 /// Minimal JS string literal escape for passing page data into the UI.
@@ -2185,18 +1812,6 @@ mod tests {
         assert_eq!(active, 1, "b.com was open; the new tab page before it isn't restored");
         assert_eq!(parse_session("active\t1\nhttps://a.com/\tA\n\tNew tab\n").1, 0, "an open new tab page falls back to the page before");
         assert!(parse_session("").0.is_empty());
-    }
-
-    #[test]
-    fn webview2_sites() {
-        assert!(!needs_webview2("https://www.youtube.com/watch?v=x"), "YouTube plays on the engine");
-        assert!(!needs_webview2("https://www.twitch.tv/x"), "Twitch plays on the engine");
-        assert!(needs_webview2("https://vimeo.com/1"));
-        assert!(!needs_webview2("https://kick.com/eslcs"), "Kick plays on the engine");
-        assert!(needs_webview2("https://open.spotify.com/track/1"));
-        assert!(!needs_webview2("https://en.wikipedia.org/wiki/YouTube"));
-        assert!(!needs_webview2("https://notyoutube.com/"));
-        assert!(!needs_webview2("velocity:newtab"));
     }
 
     #[test]

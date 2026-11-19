@@ -11,6 +11,96 @@
         ],
         "createdAt": "2026-11-06T23:00:59.596Z",
         "reason": "agent decision: unchosen direction-round sketch (Kinematics Plate), not shipped UI; mocks/decision is exempt per finish review"
+      },
+      {
+        "rule": "flat-type-hierarchy",
+        "value": "*",
+        "files": [
+          "bench/fixtures/page1.html"
+        ],
+        "createdAt": "2026-11-17T21:49:47.937Z",
+        "reason": "assistant decided: generated memory-benchmark fixture (bench/make_fixtures.py), not product UI"
+      },
+      {
+        "rule": "flat-type-hierarchy",
+        "value": "*",
+        "files": [
+          "bench/fixtures/page2.html"
+        ],
+        "createdAt": "2026-11-17T21:49:48.201Z",
+        "reason": "assistant decided: generated memory-benchmark fixture (bench/make_fixtures.py), not product UI"
+      },
+      {
+        "rule": "flat-type-hierarchy",
+        "value": "*",
+        "files": [
+          "bench/fixtures/page3.html"
+        ],
+        "createdAt": "2026-11-17T21:49:48.463Z",
+        "reason": "assistant decided: generated memory-benchmark fixture (bench/make_fixtures.py), not product UI"
+      },
+      {
+        "rule": "flat-type-hierarchy",
+        "value": "*",
+        "files": [
+          "bench/fixtures/page4.html"
+        ],
+        "createdAt": "2026-11-17T21:49:48.714Z",
+        "reason": "assistant decided: generated memory-benchmark fixture (bench/make_fixtures.py), not product UI"
+      },
+      {
+        "rule": "flat-type-hierarchy",
+        "value": "*",
+        "files": [
+          "bench/fixtures/page5.html"
+        ],
+        "createdAt": "2026-11-17T21:49:48.962Z",
+        "reason": "assistant decided: generated memory-benchmark fixture (bench/make_fixtures.py), not product UI"
+      },
+      {
+        "rule": "flat-type-hierarchy",
+        "value": "*",
+        "files": [
+          "bench/fixtures/page6.html"
+        ],
+        "createdAt": "2026-11-17T21:49:49.200Z",
+        "reason": "assistant decided: generated memory-benchmark fixture (bench/make_fixtures.py), not product UI"
+      },
+      {
+        "rule": "flat-type-hierarchy",
+        "value": "*",
+        "files": [
+          "bench/fixtures/page7.html"
+        ],
+        "createdAt": "2026-11-17T21:49:49.448Z",
+        "reason": "assistant decided: generated memory-benchmark fixture (bench/make_fixtures.py), not product UI"
+      },
+      {
+        "rule": "flat-type-hierarchy",
+        "value": "*",
+        "files": [
+          "bench/fixtures/page8.html"
+        ],
+        "createdAt": "2026-11-17T21:49:49.712Z",
+        "reason": "assistant decided: generated memory-benchmark fixture (bench/make_fixtures.py), not product UI"
+      },
+      {
+        "rule": "flat-type-hierarchy",
+        "value": "*",
+        "files": [
+          "bench/fixtures/page9.html"
+        ],
+        "createdAt": "2026-11-17T21:49:49.963Z",
+        "reason": "assistant decided: generated memory-benchmark fixture (bench/make_fixtures.py), not product UI"
+      },
+      {
+        "rule": "flat-type-hierarchy",
+        "value": "*",
+        "files": [
+          "bench/fixtures/page10.html"
+        ],
+        "createdAt": "2026-11-17T21:49:50.264Z",
+        "reason": "assistant decided: generated memory-benchmark fixture (bench/make_fixtures.py), not product UI"
       }
     ]
   }

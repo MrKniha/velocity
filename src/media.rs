@@ -1,15 +1,13 @@
 //! New tab background media and Wallpaper Engine import.
 //!
-//! The chosen file is copied into `<data>/background/bg.<ext>` and that one folder is mapped to a virtual
-//! https host in the webviews that show it, so WebView2 streams it (video included) without loading it into memory.
+//! The chosen file is copied into `<data>/background/bg.<ext>` and that one folder is served on a virtual
+//! https host to Velocity's own pages that show it (`Engine::serve`).
 
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use webview2_com::Microsoft::Web::WebView2::Win32::{ICoreWebView2_3, COREWEBVIEW2_HOST_RESOURCE_ACCESS_KIND_DENY_CORS};
-use windows::core::{Interface, HSTRING, PCWSTR};
+use windows::core::PCWSTR;
 use windows::Win32::System::Registry::{RegGetValueW, HKEY_CURRENT_USER, RRF_RT_REG_SZ};
-use wry::{WebView, WebViewExtWindows};
 
 use crate::settings::MEDIA_EXTS;
 
@@ -118,22 +116,6 @@ pub fn copy_dir(src: &Path, dst: &Path, budget: &mut u64) -> std::io::Result<()>
         } // links are skipped, so a wallpaper can't pull in files from elsewhere
     }
     Ok(())
-}
-
-/// Map `folder` to `https://<host>/` in this webview; pages may show files from it as img/video.
-// shortcut: DENY_CORS lets any page in this webview embed (not read) these files, so a site opened later in a
-// former new-tab webview could tell a wallpaper exists; upgrade by serving the new tab from its own mapped origin with DENY.
-pub fn map(view: &WebView, host: &str, folder: &Path) {
-    if let Ok(wv) = view.webview().cast::<ICoreWebView2_3>() {
-        let _ = fs::create_dir_all(folder);
-        unsafe {
-            let _ = wv.SetVirtualHostNameToFolderMapping(
-                &HSTRING::from(host),
-                &HSTRING::from(folder.as_os_str()),
-                COREWEBVIEW2_HOST_RESOURCE_ACCESS_KIND_DENY_CORS,
-            );
-        }
-    }
 }
 
 #[derive(Clone)]

@@ -1,0 +1,17 @@
+﻿reddit.com       baseline  run1 procs=4  wv2=0 ws= 1696.3 privWs= 1388.9 commit=   2143 browser=   286 maxChild= 985.2 shot=True crashed=False title=
+reddit.com       P         run1 procs=4  wv2=0 ws= 1030.7 privWs=    754 commit=   1215 browser= 292.6 maxChild= 365.7 shot=True crashed=False title=Reddit - The heart of the internet
+github.com       baseline  run1 procs=3  wv2=0 ws= 1752.3 privWs= 1530.3 commit= 4231.1 browser= 159.4 maxChild=1342.1 shot=True crashed=False title=
+github.com       P         run1 procs=3  wv2=0 ws= 1948.2 privWs= 1741.8 commit= 6418.8 browser= 159.2 maxChild=1566.7 shot=True crashed=False title=GitHub Â· Change is constant. GitHub keeps you ahead. Â· GitHub Â· GitHub
+vimeo.com        baseline  run1 procs=10 wv2=8 ws= 1350.1 privWs=  831.8 commit= 1197.2 browser=  78.3 maxChild= 533.4 shot=False crashed=False title=Vimeo - All-in-One Video Platform
+vimeo.com        P         run1 procs=3  wv2=0 ws=   1408 privWs= 1060.4 commit= 1470.1 browser= 291.2 maxChild= 752.7 shot=True crashed=False title=Vimeo - All-in-One Video Platform
+alza.sk          baseline  run1 procs=3  wv2=0 ws= 1008.6 privWs=  804.4 commit= 1307.4 browser= 274.8 maxChild= 501.4 shot=True crashed=False title=Alza.sk â€“ rÃ½chly a pohodlnÃ½ nÃ¡kup odkiaÄ¾koÄ¾vek | Alza.sk
+alza.sk          P         run1 procs=3  wv2=0 ws=    657 privWs=  487.2 commit=  859.5 browser= 274.8 maxChild= 196.6 shot=True crashed=False title=Alza.sk â€“ rÃ½chly a pohodlnÃ½ nÃ¡kup odkiaÄ¾koÄ¾vek | Alza.sk
+steampowered.com baseline  run1 procs=3  wv2=0 ws=  331.3 privWs=    149 commit=  456.8 browser=  92.9 maxChild=  28.3 shot=True crashed=False title=Certificate error
+steampowered.com P         run1 procs=3  wv2=0 ws=  276.4 privWs=  126.3 commit=  368.7 browser=  94.1 maxChild=  16.1 shot=True crashed=False title=Certificate error
+twitch.tv        baseline  run1 procs=3  wv2=0 ws=  708.4 privWs=  478.3 commit=  956.6 browser= 143.6 maxChild= 306.1 shot=True crashed=False title=
+twitch.tv        P         run1 procs=3  wv2=0 ws=  647.2 privWs=  435.3 commit=  868.3 browser= 140.6 maxChild= 278.4 shot=True crashed=False title=Twitch
+edupage.org      baseline  run1 procs=3  wv2=0 ws=  681.2 privWs=  483.6 commit=  816.9 browser= 194.7 maxChild= 260.9 shot=True crashed=False title=aSc EduPage
+edupage.org      P         run1 procs=3  wv2=0 ws=  481.4 privWs=  315.9 commit=  582.6 browser= 201.1 maxChild=  98.4 shot=True crashed=False title=aSc EduPage
+youtube.com      baseline  run1 procs=4  wv2=0 ws=  857.1 privWs=  563.3 commit= 1023.9 browser= 153.7 maxChild= 354.1 shot=True crashed=False title=
+youtube.com      P         run1 procs=4  wv2=0 ws=  679.3 privWs=  433.9 commit=  769.4 browser= 150.6 maxChild= 252.4 shot=True crashed=False title=
+saved C:\Claude_Website\velocity\bench\results\real-baseline-P.json

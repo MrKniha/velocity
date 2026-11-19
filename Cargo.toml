@@ -9,7 +9,6 @@ rusqlite = { version = "0.38", features = ["bundled"] } # the same as Servo: one
 serde_json = "1"
 sha2 = "0.10" # checks downloaded updates (src/update.rs); already in Servo's tree
 tao = "0.37.2"
-webview2-com = "0.39"
 windows = { version = "0.62", features = [
     "Win32_Foundation", "Win32_Graphics_Dwm", "Win32_Graphics_Gdi", "Win32_UI_WindowsAndMessaging", "Win32_System_Registry",
     # Encrypted media (src/drm.rs): PlayReady CDM, Media Engine, DirectComposition.
@@ -21,13 +20,14 @@ windows = { version = "0.62", features = [
 ], default-features = false }
 windows-core = "0.62"
 drm-wire = { path = "../velocity-engine/crates/drm-wire" }
-wry = { version = "0.57.1", features = ["devtools"] }
 
-# Velocity's engine (velocity-engine): web pages render through Servo instead of WebView2.
+# Velocity's engine (velocity-engine): every page (sites and Velocity's own) renders through Servo.
 # Pinned exactly: servo is pre-1.0 and breaks between monthly releases.
 servo = { version = "=0.8.0", features = ["no-wgl", "media-gstreamer"] }
 # The (patched) network layer Servo uses, for its content blocker (ads and trackers).
 servo-net = "=0.8.0"
+# The callback type Servo's memory report answers through (test mode, bench/memory.ps1); in Servo's tree.
+servo-base = "=0.8.0"
 # The cookie type Servo's site data manager takes (imported logins go into the engine too).
 cookie = "0.18"
 # Same crate instance Stylo reads its prefs from; used to switch on `layout.css.masking.enabled`.
@@ -57,6 +57,8 @@ servo-paint = { path = "../velocity-engine/vendor/servo-paint" }
 servo-paint-api = { path = "../velocity-engine/vendor/servo-paint-api" }
 servo-media-gstreamer = { path = "../velocity-engine/vendor/servo-media-gstreamer" }
 servo-script-bindings = { path = "../velocity-engine/vendor/servo-script-bindings" }
+servo-media = { path = "../velocity-engine/vendor/servo-media" }
+servo-pixels = { path = "../velocity-engine/vendor/servo-pixels" }
 
 [profile.release]
 opt-level = 3

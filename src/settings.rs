@@ -376,12 +376,6 @@ impl Settings {
         rgb(&self.frame)
     }
 
-    /// Background of the built-in pages (new tab, settings) before they paint.
-    pub fn card_rgba(&self) -> (u8, u8, u8, u8) {
-        let (r, g, b) = rgb(&self.card);
-        (r, g, b, 255)
-    }
-
     /// Object literal for the pages; every value is a validated hex colour, a key from a fixed set or a number.
     pub fn to_js(&self) -> String {
         format!(

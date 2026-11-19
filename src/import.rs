@@ -197,38 +197,6 @@ pub fn firefox_cookies(b: &Browser) -> Result<Vec<Cookie>, String> {
     rows.map(|v| v.into_iter().filter(|c| c.expires > now && !c.host.is_empty()).collect())
 }
 
-/// Put cookies into this profile's WebView2 cookie store; returns how many were taken.
-pub fn add_cookies(view: &wry::WebView, cookies: &[Cookie]) -> usize {
-    use webview2_com::Microsoft::Web::WebView2::Win32::{
-        ICoreWebView2_2, COREWEBVIEW2_COOKIE_SAME_SITE_KIND_LAX, COREWEBVIEW2_COOKIE_SAME_SITE_KIND_NONE,
-        COREWEBVIEW2_COOKIE_SAME_SITE_KIND_STRICT,
-    };
-    use windows::core::{Interface, HSTRING};
-    use wry::WebViewExtWindows;
-    let Ok(manager) = view.webview().cast::<ICoreWebView2_2>().and_then(|w| unsafe { w.CookieManager() }) else { return 0 };
-    let mut added = 0;
-    for c in cookies {
-        let ok = unsafe {
-            manager
-                .CreateCookie(&HSTRING::from(&c.name), &HSTRING::from(&c.value), &HSTRING::from(&c.host), &HSTRING::from(&c.path))
-                .and_then(|k| {
-                    k.SetExpires(c.expires)?;
-                    k.SetIsSecure(c.secure)?;
-                    k.SetIsHttpOnly(c.http_only)?;
-                    // SameSite=None is only allowed on secure cookies; others fall back to the browser default, Lax.
-                    k.SetSameSite(match c.same_site {
-                        2 => COREWEBVIEW2_COOKIE_SAME_SITE_KIND_STRICT,
-                        0 if c.secure => COREWEBVIEW2_COOKIE_SAME_SITE_KIND_NONE,
-                        _ => COREWEBVIEW2_COOKIE_SAME_SITE_KIND_LAX,
-                    })?;
-                    manager.AddOrUpdateCookie(&k)
-                })
-                .is_ok()
-        };
-        added += ok as usize;
-    }
-    added
-}
 
 #[cfg(test)]
 mod tests {

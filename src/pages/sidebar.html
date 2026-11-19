@@ -213,7 +213,7 @@
   const go = () => { send('go:' + url.value); url.blur(); };
   const host = u => { try { return new URL(u).host; } catch { return ''; } };
   // Fetch from the site itself so no third party learns which sites are open.
-  // shortcut: misses icons declared via <link rel=icon> elsewhere; upgrade by reading WebView2's FaviconChanged event.
+  // shortcut: misses icons declared via <link rel=icon> elsewhere; upgrade with the engine's notify_favicon_changed.
   const favicon = u => { try { const p = new URL(u); return /^https?:$/.test(p.protocol) ? p.origin + '/favicon.ico' : ''; } catch { return ''; } };
   const icon = u => {
     if (!favicon(u)) { const d = document.createElement('span'); d.className = 'blank'; return d; }
@@ -443,7 +443,6 @@
       : ({t: 'new', w: 'close', l: 'focus', ',': 'settings', Tab: e.shiftKey ? 'prev' : 'next'})[e.key];
     if (k) { e.preventDefault(); send('key:' + k); return; }
     if (e.key === 'F5') { e.preventDefault(); send('reload'); }
-    if (e.key === 'F12') { e.preventDefault(); send('devtools'); }
     if (e.ctrlKey && !e.altKey && e.key === 'j') { e.preventDefault(); send('downloads'); }
     if (e.altKey && e.key === 'ArrowLeft') send('back');
     if (e.altKey && e.key === 'ArrowRight') send('forward');

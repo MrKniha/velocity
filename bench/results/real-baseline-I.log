@@ -1,0 +1,34 @@
+﻿youtube.com      baseline  run1 procs=4  wv2=0 ws=  793.3 privWs=    501 commit=  866.9 browser= 158.7 maxChild= 286.2 shot=True crashed=False title=
+youtube.com      I         run1 procs=4  wv2=0 ws=  701.8 privWs=  436.4 commit=  729.2 browser= 149.3 maxChild= 256.7 shot=True crashed=False title=
+facebook.com     baseline  run1 procs=3  wv2=0 ws=  487.8 privWs=  287.5 commit=  623.7 browser= 123.7 maxChild= 134.9 shot=True crashed=False title=Facebook
+facebook.com     I         run1 procs=3  wv2=0 ws=  501.8 privWs=    335 commit=  540.2 browser= 203.6 maxChild= 115.5 shot=True crashed=False title=Facebook
+edupage.org      baseline  run1 procs=3  wv2=0 ws=  689.2 privWs=  493.2 commit=  802.7 browser= 207.5 maxChild= 256.5 shot=True crashed=False title=aSc EduPage
+edupage.org      I         run1 procs=3  wv2=0 ws=  486.5 privWs=  321.9 commit=    569 browser= 206.4 maxChild=  99.4 shot=True crashed=False title=aSc EduPage
+alza.sk          baseline  run1 procs=3  wv2=0 ws= 1007.2 privWs=  805.5 commit=   1222 browser= 275.6 maxChild= 500.7 shot=True crashed=False title=Alza.sk â€“ rÃ½chly a pohodlnÃ½ nÃ¡kup odkiaÄ¾koÄ¾vek | Alza.sk
+alza.sk          I         run1 procs=3  wv2=0 ws=  652.3 privWs=  482.5 commit=  856.5 browser= 278.3 maxChild= 188.1 shot=True crashed=False title=Alza.sk â€“ rÃ½chly a pohodlnÃ½ nÃ¡kup odkiaÄ¾koÄ¾vek | Alza.sk
+riotgames.com    baseline  run1 procs=4  wv2=0 ws=  943.1 privWs=    529 commit=  923.6 browser= 292.2 maxChild= 179.5 shot=True crashed=False title=
+riotgames.com    I         run1 procs=4  wv2=0 ws=    784 privWs=  415.9 commit=  721.9 browser= 290.2 maxChild=  94.6 shot=True crashed=False title=Riot Games. Developer of League of Legends, VALORANT, Teamfight Tactics, Legends of Runeterra, and Wild Rift. Creators of Arcane. Home of LOL and VALORANT Esports. | Riot Games
+steampowered.com baseline  run1 procs=3  wv2=0 ws=  856.5 privWs=  638.5 commit= 1039.6 browser= 233.7 maxChild= 375.6 shot=True crashed=False title=Welcome to Steam
+steampowered.com I         run1 procs=3  wv2=0 ws=  695.8 privWs=  497.4 commit=  866.5 browser= 228.1 maxChild= 253.2 shot=True crashed=False title=Welcome to Steam
+wikipedia.org    baseline  run1 procs=3  wv2=0 ws=  420.7 privWs=  226.7 commit=  529.1 browser= 114.1 maxChild=    84 shot=True crashed=False title=
+wikipedia.org    I         run1 procs=3  wv2=0 ws=  390.6 privWs=  212.8 commit=  474.9 browser= 111.9 maxChild=  84.7 shot=True crashed=False title=Web browser - Wikipedia
+reddit.com       baseline  run1 procs=4  wv2=0 ws= 1498.6 privWs=   1200 commit=   1863 browser= 248.8 maxChild= 824.8 shot=True crashed=False title=
+reddit.com       I         run1 procs=4  wv2=0 ws=  962.3 privWs=  694.5 commit= 1117.5 browser= 247.3 maxChild= 345.6 shot=True crashed=False title=Reddit - The heart of the internet
+github.com       baseline  run1 procs=3  wv2=0 ws=   3408 privWs=   3187 commit= 5237.6 browser= 215.2 maxChild=2942.3 shot=True crashed=False title=
+github.com       I         run1 procs=3  wv2=0 ws= 1849.6 privWs= 1644.3 commit= 3563.4 browser= 215.9 maxChild=  1412 shot=True crashed=False title=GitHub Â· Change is constant. GitHub keeps you ahead. Â· GitHub Â· GitHub
+twitch.tv        baseline  run1 procs=3  wv2=0 ws=  685.3 privWs=  458.7 commit=  865.7 browser= 149.4 maxChild=   280 shot=True crashed=False title=
+twitch.tv        I         run1 procs=3  wv2=0 ws=  678.2 privWs=  465.9 commit=  866.5 browser= 150.1 maxChild= 299.4 shot=True crashed=False title=Twitch
+sme.sk           baseline  run1 procs=3  wv2=0 ws=  457.3 privWs=  261.2 commit=  560.1 browser=   137 maxChild=  94.9 shot=True crashed=False title=
+sme.sk           I         run1 procs=3  wv2=0 ws=  388.4 privWs=  224.5 commit=  463.4 browser= 135.6 maxChild=  72.6 shot=True crashed=False title=SME.sk | NajÄÃ­tanejÅ¡ie sprÃ¡vy na Slovensku
+google.com       baseline  run1 procs=3  wv2=0 ws=  420.8 privWs=  223.3 commit=  523.8 browser= 104.9 maxChild=  88.4 shot=True crashed=False title=
+google.com       I         run1 procs=3  wv2=0 ws=  363.2 privWs=  197.7 commit=  438.4 browser=   102 maxChild=  79.6 shot=True crashed=False title=Google
+vimeo.com        baseline  run1 procs=10 wv2=8 ws= 1319.7 privWs=  828.9 commit= 1181.7 browser=    82 maxChild= 526.9 shot=False crashed=False title=Vimeo - All-in-One Video Platform
+vimeo.com        I         run1 procs=3  wv2=0 ws= 1469.6 privWs= 1122.1 commit= 1522.1 browser= 286.5 maxChild= 819.1 shot=True crashed=False title=Vimeo - All-in-One Video Platform
+spotify.com      baseline  run1 procs=10 wv2=8 ws=    852 privWs=  375.2 commit=  675.2 browser=  84.6 maxChild= 101.2 shot=False crashed=False title=Spotify â€“ Web Player
+spotify.com      I         run1 procs=5  wv2=0 ws=    719 privWs=  451.8 commit=  756.5 browser=   143 maxChild= 208.5 shot=True crashed=False title=Spotify â€“ Web Player
+soundcloud.com   baseline  run1 procs=10 wv2=8 ws=  877.4 privWs=  403.6 commit=  733.7 browser=  83.1 maxChild= 139.1 shot=False crashed=False title=Stream and listen to music online for free with SoundCloud
+soundcloud.com   I         run1 procs=3  wv2=0 ws=  492.8 privWs=  288.2 commit=    599 browser= 132.6 maxChild= 139.4 shot=True crashed=False title=Stream and listen to music online for free with SoundCloud
+tabs: baseline has no test mode, skipped
+tabs10           I         run1 procs=15 wv2=0 ws= 5238.4 privWs= 3893.4 commit= 5792.4 browser=   720 maxChild=1294.4 crashedTitles=0
+tabs10idle60     I         run1 procs=15 wv2=0 ws= 5381.2 privWs= 4058.4 commit= 5853.9 browser= 719.5 maxChild=1403.9 crashedTitles=0
+saved C:\Claude_Website\velocity\bench\results\real-baseline-I.json

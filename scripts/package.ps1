@@ -41,16 +41,15 @@ Click "More info", then "Run anyway".
 
 Needs
 -----
-Windows 10 or 11 (64-bit) with the Microsoft Edge WebView2 Runtime. Windows 11 already has it.
-On Windows 10, get it from https://developer.microsoft.com/microsoft-edge/webview2/ if Velocity doesn't open.
-Web pages render with Velocity's own engine; WebView2 draws Velocity's own pages (tabs, new tab, settings)
-and the video and music sites the engine can't play yet. Keep the .dll files next to velocity.exe.
+Windows 10 or 11 (64-bit) with a Direct3D 11 graphics driver. Nothing else needs to be installed:
+every page, Velocity's own (tabs, new tab, settings) included, renders with Velocity's own engine.
+Keep the .dll files next to velocity.exe.
 
 Included
 --------
 uBlock Origin Lite $uboVersion (extensions\uBOLite), an ad and tracker blocker by Raymond Hill,
 licensed under the GNU GPLv3 (see extensions\uBOLite\LICENSE.txt). Source: https://github.com/uBlockOrigin/uBOL-home
-On first start Velocity copies it into %LOCALAPPDATA%\velocity\extensions. Velocity's engine uses its rules too.
+On first start Velocity copies it into %LOCALAPPDATA%\velocity\extensions; Velocity's engine blocks ads with its rules.
 
 The engine is built on Servo (https://servo.org), licensed under the Mozilla Public License 2.0.
 GStreamer (gst*.dll and the libraries next to them) plays audio and video; it is licensed under the

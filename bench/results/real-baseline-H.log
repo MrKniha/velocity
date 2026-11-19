@@ -1,0 +1,7 @@
+﻿youtube.com      baseline  run1 procs=4  wv2=0 ws=  794.6 privWs=  502.6 commit=  870.6 browser= 156.3 maxChild= 289.7 shot=True crashed=False title=
+youtube.com      H         run1 procs=4  wv2=0 ws=  708.5 privWs=  419.6 commit=    716 browser=   155 maxChild= 234.5 shot=True crashed=False title=
+facebook.com     baseline  run1 procs=3  wv2=0 ws=    484 privWs=  285.1 commit=  625.2 browser= 122.2 maxChild= 133.9 shot=True crashed=False title=Facebook
+facebook.com     H         run1 procs=3  wv2=0 ws=  431.1 privWs=  264.1 commit=  542.4 browser= 124.2 maxChild= 123.8 shot=True crashed=False title=Facebook
+edupage.org      baseline  run1 procs=3  wv2=0 ws=  687.1 privWs=  491.1 commit=  796.5 browser=   206 maxChild= 256.3 shot=True crashed=False title=aSc EduPage
+edupage.org      H         run1 procs=3  wv2=0 ws=  625.4 privWs=  460.9 commit=  704.4 browser= 204.9 maxChild= 239.8 shot=True crashed=False title=aSc EduPage
+alza.sk          baseline  run1 procs=3  wv2=0 ws=  999.4 privWs=  798.6 commit= 1208.7 browser= 275.4 maxChild= 494.5 shot=True crashed=False title=Alza.sk â€“ rÃ½chly a pohodlnÃ½ nÃ¡kup odkiaÄ¾koÄ¾vek | Alza.sk

@@ -1,5 +1,5 @@
-//! Profiles: each one is a folder with its own settings, Essentials, history, background and WebView2
-//! data (cookies, logins, extension state). "Default" is the data folder itself, so existing data stays
+//! Profiles: each one is a folder with its own settings, Essentials, history, background and engine
+//! data (`engine/`: cookies, logins, site storage). "Default" is the data folder itself, so existing data stays
 //! where it was; the others live in `profiles/<name>`. Each profile runs in its own window
 //! (`velocity.exe --profile <name>`).
 
@@ -99,7 +99,7 @@ pub fn rename(base: &Path, old: &str, new: &str) -> bool {
     ok
 }
 
-/// Delete a profile and all its data. Fails while the profile is open somewhere (WebView2 holds its files),
+/// Delete a profile and all its data. Fails while the profile is open somewhere (the engine holds its files),
 /// in which case nothing is deleted: the folder is moved aside first, which Windows refuses while files are in use.
 pub fn delete(base: &Path, name: &str) -> bool {
     let Some(name) = valid_name(name) else { return false };
@@ -242,7 +242,7 @@ mod tests {
     fn rename_and_delete_default() {
         let base = std::env::temp_dir().join("velocity-profiles-default-test");
         let _ = fs::remove_dir_all(&base);
-        fs::create_dir_all(base.join("profile/EBWebView")).unwrap();
+        fs::create_dir_all(base.join("profile/EBWebView")).unwrap(); // an older version's browser data moves too
         fs::write(base.join("settings.ini"), "tabs_top=true").unwrap();
         fs::create_dir_all(base.join("extensions/ubo")).unwrap();
         create(&base, "Work").unwrap();

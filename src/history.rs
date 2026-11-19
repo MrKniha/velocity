@@ -67,8 +67,13 @@ impl History {
             return;
         }
         let e = Entry { ts: now(), url: clean(url, 2048), title: clean(title, 300) };
-        if self.entries.first().is_some_and(|x| x.url == e.url && x.title == e.title) {
-            return; // same page reporting the same title again
+        if let Some(x) = self.entries.first_mut().filter(|x| x.url == e.url && !x.title.is_empty()) {
+            // Same page, new title (a counter, a clock, a playing track): the file keeps the first
+            // title. Appending each change grew it by a line every second on such pages.
+            if !e.title.is_empty() {
+                x.title = e.title;
+            }
+            return;
         }
         if let Ok(mut f) = OpenOptions::new().create(true).append(true).open(&self.path) {
             let _ = writeln!(f, "{}\t{}\t{}", e.ts, e.url, e.title);
@@ -189,6 +194,22 @@ pub struct Suggestion {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn changing_title_does_not_grow_the_file() {
+        let dir = std::env::temp_dir().join("velocity-history-title-test");
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let mut h = History::load(&dir);
+        h.record("https://example.com/", ""); // the URL arrives before the title
+        for s in 0..50 {
+            h.record("https://example.com/", &format!("Uptime {s} s"));
+        }
+        h.record("https://example.com/", "");
+        assert_eq!(fs::read_to_string(dir.join("history.tsv")).unwrap().lines().count(), 2);
+        assert_eq!(h.entries[0].title, "Uptime 49 s", "the list shows the current title");
+        assert_eq!(History::load(&dir).entries[0].title, "Uptime 0 s", "the file keeps the first one");
+    }
 
     #[test]
     fn record_compact_search() {

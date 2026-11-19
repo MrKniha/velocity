@@ -6,7 +6,7 @@
 
 web
 
-(Desktop browser for Windows. The UI is HTML/CSS rendered in WebView2 inside a native Rust window, so web design rules apply to every surface.)
+(Desktop browser for Windows. The UI is HTML/CSS rendered by Velocity's own engine (Servo) inside a native Rust window, so web design rules apply to every surface.)
 
 ## Users
 
@@ -18,13 +18,13 @@ A fast, low-memory desktop browser with a minimal interface that can be configur
 
 ## Positioning
 
-Speed and configurability together: a lightweight shell (small Rust binary on the system WebView2 runtime, one shared process tree, built-in support for uBlock Origin Lite) that still exposes real settings for layout, theme and behaviour.
+Speed and configurability together: a lightweight shell (Rust binary with its own Servo-based engine, sandboxed content processes, uBlock Origin Lite's rules built in) that still exposes real settings for layout, theme and behaviour.
 
 ## Operating Context
 
-- Windows 11, WebView2 runtime (Chromium-based engine shipped with Windows).
+- Windows 10/11 x64; Velocity's own engine (Servo), no system web runtime.
 - Used all day as the primary browser: many tabs, frequent switching, searching from the new tab page.
-- Extensions are loaded unpacked from `%LOCALAPPDATA%\velocity\extensions`; uBlock Origin Lite is the tested one.
+- uBlock Origin Lite's rulesets are read from `%LOCALAPPDATA%\velocity\extensions\uBOLite`; the engine applies them (no extension runtime).
 
 ## Capabilities and Constraints
 
