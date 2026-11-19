@@ -295,6 +295,10 @@ impl Engine {
             // Every content process: no spare 1 MB GC chunk kept empty, two style/layout threads
             // (the current one counts as one), two pool threads for image decoding and the like.
             js_mem_gc_empty_chunk_count_min: 0,
+            // Servo's experimental backdrop-filter (frosted panels, e.g. store.steampowered.com's
+            // search box drew a stray grey shape without it). Not container queries: Servo parses
+            // container-type but evaluates neither cq units nor @container rules.
+            layout_css_backdrop_filter_enabled: true,
             layout_threads: 2,
             thread_pool_workers_max: 2,
             ..Default::default()
@@ -945,6 +949,8 @@ fn clip_siblings(hwnd: isize) {
 pub fn set_style_prefs() {
     stylo_static_prefs::set_pref!("layout.css.masking.enabled", true);
     stylo_static_prefs::set_pref!("layout.css.zoom.enabled", true);
+    // Servo's own pref sets this only in the browser process: content processes need it here.
+    stylo_static_prefs::set_pref!("layout.css.backdrop-filter.enabled", true);
 }
 
 impl Inner {
