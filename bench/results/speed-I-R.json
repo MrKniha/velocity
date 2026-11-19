@@ -1,0 +1,198 @@
+﻿[
+    {
+        "kind":  "work",
+        "build":  "I",
+        "run":  1,
+        "site":  "work",
+        "result":  "{\"dom\":98,\"layout\":4787,\"json\":87,\"regex\":25,\"sort\":55,\"alloc\":21}"
+    },
+    {
+        "kind":  "site",
+        "build":  "I",
+        "run":  1,
+        "site":  "wikipedia.org",
+        "result":  "{\"response\":513,\"dcl\":4049,\"load\":5000,\"fcp\":4608}"
+    },
+    {
+        "kind":  "site",
+        "build":  "I",
+        "run":  1,
+        "site":  "reddit.com",
+        "result":  "{\"response\":429,\"dcl\":1096,\"load\":6126,\"fcp\":871}"
+    },
+    {
+        "kind":  "site",
+        "build":  "I",
+        "run":  1,
+        "site":  "alza.sk",
+        "result":  "{\"response\":560,\"dcl\":2381,\"load\":5523,\"fcp\":1939}"
+    },
+    {
+        "kind":  "site",
+        "build":  "I",
+        "run":  1,
+        "site":  "github.com",
+        "result":  "{\"response\":422,\"dcl\":2498,\"load\":3341,\"fcp\":3024}"
+    },
+    {
+        "kind":  "site",
+        "build":  "I",
+        "run":  1,
+        "site":  "youtube.com",
+        "result":  "{\"response\":223,\"dcl\":3434,\"load\":5888,\"fcp\":4485}"
+    },
+    {
+        "kind":  "site",
+        "build":  "I",
+        "run":  1,
+        "site":  "sme.sk",
+        "result":  "{\"response\":481,\"dcl\":1597,\"load\":1693,\"fcp\":1383}"
+    },
+    {
+        "kind":  "work",
+        "build":  "R",
+        "run":  1,
+        "site":  "work",
+        "result":  "{\"dom\":96,\"layout\":4685,\"json\":74,\"regex\":21,\"sort\":51,\"alloc\":15}"
+    },
+    {
+        "kind":  "site",
+        "build":  "R",
+        "run":  1,
+        "site":  "wikipedia.org",
+        "result":  "{\"response\":474,\"dcl\":3761,\"load\":4711,\"fcp\":4321}"
+    },
+    {
+        "kind":  "site",
+        "build":  "R",
+        "run":  1,
+        "site":  "reddit.com",
+        "result":  "{\"response\":504,\"dcl\":1095,\"load\":5024,\"fcp\":896}"
+    },
+    {
+        "kind":  "site",
+        "build":  "R",
+        "run":  1,
+        "site":  "alza.sk",
+        "result":  "{\"response\":467,\"dcl\":2237,\"load\":2547,\"fcp\":2080}"
+    },
+    {
+        "kind":  "site",
+        "build":  "R",
+        "run":  1,
+        "site":  "github.com",
+        "result":  "{\"response\":417,\"dcl\":2665,\"load\":2907,\"fcp\":2590}"
+    },
+    {
+        "kind":  "site",
+        "build":  "R",
+        "run":  1,
+        "site":  "youtube.com",
+        "result":  "{\"response\":233,\"dcl\":2170,\"load\":2609,\"fcp\":2603}"
+    },
+    {
+        "kind":  "site",
+        "build":  "R",
+        "run":  1,
+        "site":  "sme.sk",
+        "result":  "{\"response\":452,\"dcl\":1719,\"load\":2184,\"fcp\":1574}"
+    },
+    {
+        "kind":  "work",
+        "build":  "I",
+        "run":  2,
+        "site":  "work",
+        "result":  "{\"dom\":74,\"layout\":4146,\"json\":68,\"regex\":16,\"sort\":45,\"alloc\":17}"
+    },
+    {
+        "kind":  "site",
+        "build":  "I",
+        "run":  2,
+        "site":  "wikipedia.org",
+        "result":  "{\"response\":485,\"dcl\":1431,\"load\":2204,\"fcp\":1857}"
+    },
+    {
+        "kind":  "site",
+        "build":  "I",
+        "run":  2,
+        "site":  "reddit.com",
+        "result":  "{\"response\":842,\"dcl\":1907,\"load\":6500,\"fcp\":1329}"
+    },
+    {
+        "kind":  "site",
+        "build":  "I",
+        "run":  2,
+        "site":  "alza.sk",
+        "result":  "{\"response\":477,\"dcl\":2173,\"load\":5251,\"fcp\":1737}"
+    },
+    {
+        "kind":  "site",
+        "build":  "I",
+        "run":  2,
+        "site":  "github.com",
+        "result":  "{\"response\":382,\"dcl\":2154,\"load\":2827,\"fcp\":2536}"
+    },
+    {
+        "kind":  "site",
+        "build":  "I",
+        "run":  2,
+        "site":  "youtube.com",
+        "result":  "{\"response\":292,\"dcl\":5046,\"load\":6483,\"fcp\":6126}"
+    },
+    {
+        "kind":  "site",
+        "build":  "I",
+        "run":  2,
+        "site":  "sme.sk",
+        "result":  "{\"response\":450,\"dcl\":1633,\"load\":2211,\"fcp\":1401}"
+    },
+    {
+        "kind":  "work",
+        "build":  "R",
+        "run":  2,
+        "site":  "work",
+        "result":  "{\"dom\":99,\"layout\":4704,\"json\":71,\"regex\":19,\"sort\":47,\"alloc\":15}"
+    },
+    {
+        "kind":  "site",
+        "build":  "R",
+        "run":  2,
+        "site":  "wikipedia.org",
+        "result":  "{\"response\":483,\"dcl\":1445,\"load\":2176,\"fcp\":1843}"
+    },
+    {
+        "kind":  "site",
+        "build":  "R",
+        "run":  2,
+        "site":  "reddit.com",
+        "result":  "{\"response\":651,\"dcl\":1446,\"load\":5335,\"fcp\":625}"
+    },
+    {
+        "kind":  "site",
+        "build":  "R",
+        "run":  2,
+        "site":  "alza.sk",
+        "result":  "{\"response\":516,\"dcl\":2369,\"load\":6734,\"fcp\":1809}"
+    },
+    {
+        "kind":  "site",
+        "build":  "R",
+        "run":  2,
+        "site":  "github.com",
+        "result":  "{\"response\":386,\"dcl\":2221,\"load\":2890,\"fcp\":2642}"
+    },
+    {
+        "kind":  "site",
+        "build":  "R",
+        "run":  2,
+        "site":  "youtube.com",
+        "result":  "{\"response\":307,\"dcl\":4542,\"load\":5801,\"fcp\":5472}"
+    },
+    {
+        "kind":  "site",
+        "build":  "R",
+        "run":  2,
+        "site":  "sme.sk",
+        "result":  "{\"response\":416,\"dcl\":1546,\"load\":1662,\"fcp\":1227}"
+    }
+]

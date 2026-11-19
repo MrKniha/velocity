@@ -1,0 +1,24 @@
+﻿reddit.com       baseline  run1 procs=4  wv2=0 ws=   1384 privWs= 1072.1 commit= 1706.4 browser= 220.4 maxChild= 725.8 shot=True crashed=False title=
+reddit.com       Q         run1 procs=4  wv2=0 ws=  864.3 privWs=  543.1 commit=  982.1 browser= 132.8 maxChild= 307.8 shot=True crashed=False title=Reddit - The heart of the internet
+github.com       baseline  run1 procs=3  wv2=0 ws=   1271 privWs= 1033.4 commit= 2442.2 browser= 180.1 maxChild= 824.7 shot=True crashed=False title=
+github.com       Q         run1 procs=3  wv2=0 ws= 1529.4 privWs= 1318.3 commit= 4836.8 browser= 148.2 maxChild=1155.8 shot=True crashed=False title=GitHub Â· Change is constant. GitHub keeps you ahead. Â· GitHub Â· GitHub
+vimeo.com        baseline  run1 procs=10 wv2=8 ws= 1337.2 privWs=    817 commit= 1164.2 browser=  83.3 maxChild= 522.1 shot=False crashed=False title=Vimeo - All-in-One Video Platform
+vimeo.com        Q         run1 procs=3  wv2=0 ws= 1345.8 privWs=  992.7 commit= 1384.4 browser= 221.4 maxChild= 756.6 shot=True crashed=False title=Vimeo - All-in-One Video Platform
+alza.sk          baseline  run1 procs=3  wv2=0 ws= 1013.2 privWs=  807.2 commit=   1255 browser= 277.5 maxChild=   501 shot=True crashed=False title=Alza.sk â€“ rÃ½chly a pohodlnÃ½ nÃ¡kup odkiaÄ¾koÄ¾vek | Alza.sk
+alza.sk          Q         run1 procs=3  wv2=0 ws=    575 privWs=  400.4 commit=  779.9 browser= 212.7 maxChild= 173.3 shot=True crashed=False title=Alza.sk â€“ rÃ½chly a pohodlnÃ½ nÃ¡kup odkiaÄ¾koÄ¾vek | Alza.sk
+edupage.org      baseline  run1 procs=3  wv2=0 ws=  695.9 privWs=  493.8 commit=  806.2 browser= 209.3 maxChild= 255.8 shot=True crashed=False title=aSc EduPage
+edupage.org      Q         run1 procs=3  wv2=0 ws=  451.7 privWs=  281.4 commit=  530.4 browser= 178.6 maxChild=  88.4 shot=True crashed=False title=aSc EduPage
+youtube.com      baseline  run1 procs=4  wv2=0 ws=  837.2 privWs=  549.6 commit=  945.5 browser=   150 maxChild= 344.9 shot=True crashed=False title=
+youtube.com      Q         run1 procs=4  wv2=0 ws=    632 privWs=  392.7 commit=  675.5 browser= 131.4 maxChild= 233.2 shot=True crashed=False title=
+twitch.tv        baseline  run1 procs=3  wv2=0 ws=  712.8 privWs=  480.3 commit=  929.4 browser= 150.2 maxChild=   302 shot=True crashed=False title=
+twitch.tv        Q         run1 procs=3  wv2=0 ws=  589.3 privWs=  371.2 commit=  755.1 browser= 129.9 maxChild= 226.6 shot=True crashed=False title=Twitch
+riotgames.com    baseline  run1 procs=4  wv2=0 ws=  947.7 privWs=  527.4 commit=  938.6 browser= 295.9 maxChild= 175.8 shot=True crashed=False title=
+riotgames.com    Q         run1 procs=4  wv2=0 ws=    753 privWs=  379.5 commit=  697.9 browser= 261.8 maxChild=  89.7 shot=True crashed=False title=Riot Games. Developer of League of Legends, VALORANT, Teamfight Tactics, Legends of Runeterra, and Wild Rift. Creators of Arcane. Home of LOL and VALORANT Esports. | Riot Games
+wikipedia.org    baseline  run1 procs=3  wv2=0 ws=  429.1 privWs=  229.5 commit=    557 browser= 115.6 maxChild=  85.6 shot=True crashed=False title=Web browser - Wikipedia
+wikipedia.org    Q         run1 procs=3  wv2=0 ws=  381.6 privWs=  197.8 commit=    466 browser=   104 maxChild=  79.3 shot=True crashed=False title=Web browser - Wikipedia
+facebook.com     baseline  run1 procs=3  wv2=0 ws=  487.9 privWs=  283.4 commit=  627.7 browser= 120.4 maxChild= 134.3 shot=True crashed=False title=Facebook
+facebook.com     Q         run1 procs=3  wv2=0 ws=  484.8 privWs=  310.6 commit=  636.2 browser=   193 maxChild=   103 shot=True crashed=False title=Facebook
+tabs: baseline has no test mode, skipped
+tabs10           Q         run1 procs=15 wv2=0 ws= 4718.1 privWs= 3191.4 commit= 4824.2 browser= 565.4 maxChild= 713.7 crashedTitles=0
+tabs10idle60     Q         run1 procs=15 wv2=0 ws= 4766.4 privWs= 3239.5 commit= 4877.5 browser= 570.1 maxChild= 705.5 crashedTitles=0
+saved C:\Claude_Website\velocity\bench\results\real-baseline-Q.json
