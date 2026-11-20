@@ -303,6 +303,9 @@ impl Engine {
             // search box drew a stray grey shape without it).
             layout_css_backdrop_filter_enabled: true,
             layout_css_container_queries_enabled: CONTAINER_QUERIES,
+            // The CSS Font Loading API (`FontFace`, `document.fonts.add/load/check`): pages that
+            // construct a FontFace threw a ReferenceError without it.
+            dom_fontface_enabled: true,
             layout_threads: 2,
             thread_pool_workers_max: 2,
             ..Default::default()
