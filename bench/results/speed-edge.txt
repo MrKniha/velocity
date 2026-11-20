@@ -7,3 +7,6 @@ Velocity (engine-memory, hidden bench desktop), see speed-I-R.json / speed-R-S.j
   dom 59-99, layout 3830-4787, json 59-87, regex 15-25, sort 32-55, alloc 10-21
 Velocity, DOM split after load (eval), 20000 elements: create 7-8, className 7, textContent 9,
   append detached 3, attached 4, fragment 15 (~30 ms in all; the 59-99 above runs during page load).
+Velocity, 2026-11-20 (engine-memory b757129 / engine 8e1809e), speed-U-vs-V.json, 2 runs each:
+  dom 38-44, layout 2393-2685, json 41-43, regex 10-11, sort 19-20, alloc 9-10
+  (layout now at or below Edge's 2767-2849; DOM still about 3x Edge's 12)
