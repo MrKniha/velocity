@@ -108,6 +108,10 @@ const COSMETIC_JS: &str = r#"(() => {
   document.addEventListener('DOMContentLoaded', link);
   addEventListener('load', () => { link(); setTimeout(link, 3000); });
 })();"#;
+/// `@container` size queries (the patched engine records container sizes for them, see
+/// ../velocity-engine/vendor/README.md). Off: with them github.com's hero animation never shows its
+/// text (GSAP + SplitText path that Servo does not finish), and no tested site needs them.
+const CONTAINER_QUERIES: bool = false;
 /// Webcompat intervention (like Firefox's), youtube.com only: its template bindings hand
 /// `hidden` the Closure sentinel for "no value yet" (an object, so true) instead of undefined,
 /// which hid the guide's icons. Treat that object as false.
@@ -296,9 +300,9 @@ impl Engine {
             // (the current one counts as one), two pool threads for image decoding and the like.
             js_mem_gc_empty_chunk_count_min: 0,
             // Servo's experimental backdrop-filter (frosted panels, e.g. store.steampowered.com's
-            // search box drew a stray grey shape without it). Not container queries: Servo parses
-            // container-type but evaluates neither cq units nor @container rules.
+            // search box drew a stray grey shape without it).
             layout_css_backdrop_filter_enabled: true,
+            layout_css_container_queries_enabled: CONTAINER_QUERIES,
             layout_threads: 2,
             thread_pool_workers_max: 2,
             ..Default::default()
@@ -949,8 +953,11 @@ fn clip_siblings(hwnd: isize) {
 pub fn set_style_prefs() {
     stylo_static_prefs::set_pref!("layout.css.masking.enabled", true);
     stylo_static_prefs::set_pref!("layout.css.zoom.enabled", true);
-    // Servo's own pref sets this only in the browser process: content processes need it here.
+    // Servo's own prefs set these only in the browser process: content processes need them here.
     stylo_static_prefs::set_pref!("layout.css.backdrop-filter.enabled", true);
+    // @container size queries (the patched layout records the containers' sizes; Stylo has no
+    // cq units outside Gecko).
+    stylo_static_prefs::set_pref!("layout.css.container-queries.enabled", CONTAINER_QUERIES);
 }
 
 impl Inner {

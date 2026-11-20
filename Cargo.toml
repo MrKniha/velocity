@@ -59,6 +59,8 @@ servo-media-gstreamer = { path = "../velocity-engine/vendor/servo-media-gstreame
 servo-script-bindings = { path = "../velocity-engine/vendor/servo-script-bindings" }
 servo-media = { path = "../velocity-engine/vendor/servo-media" }
 servo-pixels = { path = "../velocity-engine/vendor/servo-pixels" }
+servo-layout-api = { path = "../velocity-engine/vendor/servo-layout-api" }
+stylo = { path = "../velocity-engine/vendor/stylo" }
 
 [profile.release]
 opt-level = 3
