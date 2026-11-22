@@ -306,6 +306,12 @@ impl Engine {
             // The CSS Font Loading API (`FontFace`, `document.fonts.add/load/check`): pages that
             // construct a FontFace threw a ReferenceError without it.
             dom_fontface_enabled: true,
+            // IndexedDB (web apps keep their data in it), navigator.permissions/storage and
+            // window.visualViewport: missing, pages that use them threw or fell back.
+            dom_indexeddb_enabled: true,
+            dom_permissions_enabled: true,
+            dom_storage_manager_api_enabled: true,
+            dom_visual_viewport_enabled: true,
             layout_threads: 2,
             thread_pool_workers_max: 2,
             ..Default::default()
