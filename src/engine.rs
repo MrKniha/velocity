@@ -312,6 +312,9 @@ impl Engine {
             dom_permissions_enabled: true,
             dom_storage_manager_api_enabled: true,
             dom_visual_viewport_enabled: true,
+            // navigator.clipboard for "Copy" buttons. The patched engine refuses readText (no
+            // permission prompt yet) and writeText without a user gesture.
+            dom_async_clipboard_enabled: true,
             layout_threads: 2,
             thread_pool_workers_max: 2,
             ..Default::default()
