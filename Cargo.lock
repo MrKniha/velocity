@@ -6724,6 +6724,7 @@ dependencies = [
  "servo-tracing",
  "servo-url",
  "servo-wakelock",
+ "servo-webgl",
  "stylo",
  "stylo_traits",
  "surfman",
@@ -7737,6 +7738,7 @@ dependencies = [
  "servo-profile-traits",
  "servo-timers",
  "servo-tracing",
+ "servo-webgl",
  "smallvec",
  "stylo_traits",
  "surfman",
@@ -7871,6 +7873,7 @@ dependencies = [
  "markup5ever",
  "mime",
  "mime_guess",
+ "mozangle",
  "mozjs",
  "nom-rfc8288",
  "num-traits",
@@ -8169,6 +8172,31 @@ checksum = "f32ef0d1402c9c169fb10a4a4cb49c42864e2dab6f1ec2fc2026447efee835e7"
 dependencies = [
  "serde",
  "servo-embedder-traits",
+]
+
+[[package]]
+name = "servo-webgl"
+version = "0.8.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "28d10b20a6a3dd77133b91fbd0e7840c582faf379ee5b870abad9429d0863aa6"
+dependencies = [
+ "bitflags 2.13.2",
+ "byteorder",
+ "crossbeam-channel",
+ "euclid",
+ "glow",
+ "half",
+ "itertools 0.15.0",
+ "log",
+ "num-traits",
+ "parking_lot",
+ "rustc-hash",
+ "servo-base",
+ "servo-canvas-traits",
+ "servo-paint-api",
+ "servo-pixels",
+ "surfman",
+ "webrender_api",
 ]
 
 [[package]]

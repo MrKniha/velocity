@@ -24,8 +24,8 @@ drm-wire = { path = "../velocity-engine/crates/drm-wire" }
 # Velocity's engine (velocity-engine): every page (sites and Velocity's own) renders through Servo.
 # Pinned exactly: servo is pre-1.0 and breaks between monthly releases.
 # subtlecrypto: `crypto.subtle` (Web Crypto); without it Microsoft's sign-in library (outlook.live.com)
-# stopped with "crypto_nonexistent".
-servo = { version = "=0.8.0", features = ["no-wgl", "media-gstreamer", "subtlecrypto"] }
+# stopped with "crypto_nonexistent". webgl: <canvas> getContext('webgl'/'webgl2') returned null.
+servo = { version = "=0.8.0", features = ["no-wgl", "media-gstreamer", "subtlecrypto", "webgl"] }
 # The (patched) network layer Servo uses, for its content blocker (ads and trackers).
 servo-net = "=0.8.0"
 # The callback type Servo's memory report answers through (test mode, bench/memory.ps1); in Servo's tree.
