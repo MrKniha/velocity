@@ -13,6 +13,10 @@ A fast, light desktop browser for Windows, built on its own Servo engine.
 
 [Features](#features) · [Building from source](#building-from-source) · [Memory use](#memory-use) · [Contributing](#contributing) · [License](#license)
 
+<br>
+
+<img src="assets/screenshot.png" alt="Velocity's new tab page, with the tab sidebar on the left and search, clock and Essentials in the middle" width="900">
+
 </div>
 
 Velocity renders every page with a patched build of [Servo](https://servo.org), the web engine written in Rust. Its own tabs, new tab page and settings are web pages on the same engine. There is no Chromium, WebView2 or other system web runtime inside.
