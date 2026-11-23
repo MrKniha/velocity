@@ -386,7 +386,7 @@ impl Engine {
             self.serve(host, dir);
         }
         use tao::platform::windows::WindowExtWindows;
-        use tao::rwh_06::{HasDisplayHandle, HasWindowHandle};
+        use tao::rwh_06::HasWindowHandle;
         let window = WindowBuilder::new()
             .with_parent_window(parent.hwnd())
             .with_decorations(false)
@@ -396,9 +396,9 @@ impl Engine {
             .build(target)
             .expect("UI window");
         clip_siblings(window.hwnd() as isize);
-        let display = window.display_handle().expect("display handle");
         let handle = window.window_handle().expect("window handle");
-        let context = Rc::new(WindowRenderingContext::new(display, handle, window.inner_size()).expect("GL context for the UI"));
+        // On the pages' Direct3D device: a device of its own cost ~100 GPU driver threads.
+        let context = Rc::new(self.inner.context.new_sharing_device(handle, window.inner_size()).expect("GL context for the UI"));
         let user_content = Rc::new(UserContentManager::new(&self.servo));
         for js in [UI_IPC_JS, SVG_JS].into_iter().chain(scripts.iter().copied()) {
             user_content.add_script(Rc::new(UserScript::new(js.into(), None)));
@@ -498,6 +498,17 @@ impl Engine {
             self.shots.set(self.shots.get() | 2);
         }
         ui.context.present();
+        // Test mode (bench): when the tab UI was first presented with its page ready (start-up time).
+        static READY: std::sync::Once = std::sync::Once::new();
+        if ui.pending.borrow().is_none() && !READY.is_completed() {
+            if let Some(mut file) = std::env::var_os("VELOCITY_TEST_COMMANDS") {
+                READY.call_once(|| {
+                    file.push(".ready");
+                    let ms = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_millis());
+                    let _ = std::fs::write(file, ms.to_string());
+                });
+            }
+        }
     }
 
     /// Input for the tab UI's window; returns a Velocity shortcut as `handle` does.

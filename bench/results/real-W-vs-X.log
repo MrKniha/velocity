@@ -1,0 +1,35 @@
+﻿youtube.com      base      run1 procs=4  wv2=0 ws=  668.4 privWs=  414.9 commit=  805.7 browser= 144.2 maxChild= 242.5 shot=True crashed=False title=
+youtube.com      release   run1 procs=4  wv2=0 ws=    632 privWs=  378.1 commit=  745.4 browser= 119.1 maxChild= 230.6 shot=True crashed=False title=
+facebook.com     base      run1 procs=3  wv2=0 ws=  530.8 privWs=  265.2 commit=  614.6 browser= 123.7 maxChild= 126.6 shot=True crashed=False title=Facebook
+facebook.com     release   run1 procs=3  wv2=0 ws=    504 privWs=  242.6 commit=  586.1 browser=  99.8 maxChild= 127.9 shot=True crashed=False title=Facebook
+edupage.org      base      run1 procs=3  wv2=0 ws=  453.6 privWs=  283.2 commit=  556.9 browser= 180.1 maxChild=  88.4 shot=True crashed=False title=aSc EduPage
+edupage.org      release   run1 procs=3  wv2=0 ws=  427.7 privWs=  258.2 commit=  507.6 browser= 154.8 maxChild=  88.6 shot=True crashed=False title=aSc EduPage
+alza.sk          base      run1 procs=3  wv2=0 ws=  493.7 privWs=    319 commit=    638 browser= 134.2 maxChild= 170.2 shot=True crashed=False title=Alza.sk â€“ rÃ½chly a pohodlnÃ½ nÃ¡kup odkiaÄ¾koÄ¾vek | Alza.sk
+alza.sk          release   run1 procs=3  wv2=0 ws=  462.2 privWs=  288.3 commit=  584.7 browser= 109.1 maxChild= 164.8 shot=True crashed=False title=Alza.sk â€“ rÃ½chly a pohodlnÃ½ nÃ¡kup odkiaÄ¾koÄ¾vek | Alza.sk
+riotgames.com    base      run1 procs=3  wv2=0 ws=  271.7 privWs=  117.5 commit=  367.8 browser=    88 maxChild=    15 shot=True crashed=False title=Certificate error
+riotgames.com    release   run1 procs=3  wv2=0 ws=  247.6 privWs=   93.4 commit=  319.3 browser=  63.8 maxChild=    15 shot=True crashed=False title=Certificate error
+steampowered.com base      run1 procs=3  wv2=0 ws=  268.9 privWs=  114.9 commit=  361.8 browser=  85.9 maxChild=  14.5 shot=True crashed=False title=Certificate error
+steampowered.com release   run1 procs=3  wv2=0 ws=  245.4 privWs=   91.3 commit=  318.1 browser=  62.4 maxChild=  14.5 shot=True crashed=False title=Certificate error
+wikipedia.org    base      run1 procs=3  wv2=0 ws=  379.2 privWs=  195.2 commit=    488 browser= 104.8 maxChild=  75.8 shot=True crashed=False title=Web browser - Wikipedia
+wikipedia.org    release   run1 procs=3  wv2=0 ws=  358.5 privWs=  175.3 commit=  447.6 browser=  80.4 maxChild=  80.2 shot=True crashed=False title=Web browser - Wikipedia
+reddit.com       base      run1 procs=4  wv2=0 ws=  603.6 privWs=  336.5 commit=  702.1 browser= 114.6 maxChild= 125.3 shot=True crashed=False title=Reddit - The heart of the internet
+reddit.com       release   run1 procs=4  wv2=0 ws=  593.4 privWs=  326.5 commit=  670.8 browser=  90.6 maxChild= 128.9 shot=True crashed=False title=Reddit - The heart of the internet
+github.com       base      run1 procs=3  wv2=0 ws= 1414.1 privWs=   1200 commit= 2632.3 browser= 170.1 maxChild=  1015 shot=True crashed=False title=GitHub Â· Change is constant. GitHub keeps you ahead. Â· GitHub Â· GitHub
+github.com       release   run1 procs=3  wv2=0 ws= 1451.4 privWs= 1238.3 commit= 2454.1 browser= 137.9 maxChild=1085.6 shot=True crashed=False title=GitHub Â· Change is constant. GitHub keeps you ahead. Â· GitHub Â· GitHub
+twitch.tv        base      run1 procs=3  wv2=0 ws=  635.9 privWs=  414.5 commit=  859.4 browser= 142.5 maxChild= 256.9 shot=True crashed=False title=Twitch
+twitch.tv        release   run1 procs=3  wv2=0 ws=  617.9 privWs=    398 commit=  833.1 browser=   121 maxChild=   262 shot=True crashed=False title=Twitch
+sme.sk           base      run1 procs=3  wv2=0 ws=  373.9 privWs=  204.2 commit=  470.5 browser=   122 maxChild=  67.3 shot=True crashed=False title=SME.sk | NajÄÃ­tanejÅ¡ie sprÃ¡vy na Slovensku
+sme.sk           release   run1 procs=3  wv2=0 ws=  347.8 privWs=  178.3 commit=  425.3 browser=  94.3 maxChild=  69.1 shot=True crashed=False title=SME.sk | NajÄÃ­tanejÅ¡ie sprÃ¡vy na Slovensku
+google.com       base      run1 procs=3  wv2=0 ws=  337.7 privWs=  167.6 commit=  433.9 browser=  90.9 maxChild=  62.2 shot=True crashed=False title=Google
+google.com       release   run1 procs=3  wv2=0 ws=  325.3 privWs=  154.4 commit=  411.6 browser=  67.4 maxChild=  71.8 shot=True crashed=False title=Google
+vimeo.com        base      run1 procs=3  wv2=0 ws= 1421.7 privWs=   1066 commit= 1557.2 browser= 258.7 maxChild= 792.2 shot=True crashed=False title=Vimeo - All-in-One Video Platform
+vimeo.com        release   run1 procs=3  wv2=0 ws= 1345.9 privWs=  988.9 commit= 1475.7 browser= 220.1 maxChild= 753.6 shot=True crashed=False title=Vimeo - All-in-One Video Platform
+spotify.com      base      run1 procs=5  wv2=0 ws=  706.1 privWs=  432.3 commit=  816.9 browser= 130.8 maxChild= 194.5 shot=True crashed=False title=Spotify â€“ Web Player
+spotify.com      release   run1 procs=5  wv2=0 ws=  659.3 privWs=  385.6 commit=  775.5 browser=   105 maxChild= 180.6 shot=True crashed=False title=Spotify â€“ Web Player
+soundcloud.com   base      run1 procs=3  wv2=0 ws=  499.4 privWs=  282.9 commit=  662.5 browser= 132.2 maxChild= 135.7 shot=True crashed=False title=Stream and listen to music online for free with SoundCloud
+soundcloud.com   release   run1 procs=3  wv2=0 ws=  469.9 privWs=    255 commit=  628.3 browser= 105.6 maxChild= 134.2 shot=True crashed=False title=Stream and listen to music online for free with SoundCloud
+tabs10           base      run1 procs=14 wv2=0 ws= 3533.2 privWs= 2346.6 commit= 3824.9 browser=   321 maxChild= 788.8 crashedTitles=0
+tabs10idle60     base      run1 procs=14 wv2=0 ws= 3454.7 privWs= 2267.7 commit= 3904.4 browser= 320.6 maxChild= 628.8 crashedTitles=0
+tabs10           release   run1 procs=14 wv2=0 ws= 3615.1 privWs= 2428.5 commit= 4714.4 browser= 296.2 maxChild=1037.5 crashedTitles=0
+tabs10idle60     release   run1 procs=14 wv2=0 ws= 3422.9 privWs= 2236.2 commit=   4720 browser= 294.3 maxChild= 831.1 crashedTitles=0
+saved C:\Users\mrboo\AppData\Local\Temp\vperf\results\real-it2.json
