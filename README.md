@@ -15,7 +15,7 @@ A fast, light desktop browser for Windows, built on its own Servo engine.
 
 <br>
 
-<img src="assets/screenshot.png" alt="Velocity's new tab page, with the tab sidebar on the left and search, clock and Essentials in the middle" width="900">
+<img src="assets/screenshot.png" alt="Velocity's new tab page, with tabs and the address bar along the top and the clock, search and Essentials in the middle" width="900">
 
 </div>
 
@@ -30,7 +30,7 @@ The aim is a browser that opens quickly, stays light on memory while you work, a
 
 ### Interface
 
-- Vertical tabs in a sidebar, on the left or right, with Essentials for the sites you keep open.
+- Tabs along the top or in a vertical sidebar on the left or right, with Essentials for the sites you keep open.
 - Compact mode hides the sidebar until the mouse reaches the window edge.
 - A new tab page with a clock, search and your own background image or video. Wallpaper Engine backgrounds can be imported.
 - Dark and light themes, an accent color, and adjustable sidebar width, page spacing and corner radius.
